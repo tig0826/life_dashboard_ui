@@ -14,7 +14,7 @@ import { PeriodSelector, type Period } from "@/components/dashboard/period-selec
 
 // Activity type definition matching components/dashboard/activity-timeline.tsx
 interface ActivityBlock {
-  type: "sleep" | "work" | "meals" | "move" | "media" | "other"
+  type: string
   startHour: number
   endHour: number
 }

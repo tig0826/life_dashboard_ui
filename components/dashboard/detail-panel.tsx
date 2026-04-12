@@ -89,10 +89,27 @@ const mealData = {
     items: ["鶏胸肉のグリル", "玄米", "野菜スープ", "サラダ"], 
     calories: 680 
   },
-  dinner: { 
+  dinner: {
     items: ["サーモンのソテー", "温野菜", "味噌汁", "ご飯"], 
     calories: 820 
   },
+}
+
+export interface MealDetails{
+  meals: {
+    breakfast: { items: string[]; calories: number };
+    lunch: { items: string[]; calories: number };
+    dinner: { items: string[]; calories: number };
+    snack: { items: string[]; calories: number };
+  };
+  nutrition: {
+    name: string;
+    label: string;
+    current: number;
+    target: number;
+    unit: string;
+    isLimitType?: boolean;
+  }[];
 }
 
 // Full nutrition data from Asken
@@ -136,7 +153,7 @@ export function DetailPanel({ period, onPeriodChange }: DetailPanelProps) {
     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
       <div className="flex items-center justify-between shrink-0 mb-2">
         <TabsList className="grid grid-cols-5 bg-[oklch(0.12_0.015_250)] p-0.5 h-9 rounded-lg">
-          <TabsTrigger value="work" className="text-xs gap-1.5 data-[state=active]:bg-[oklch(0.75_0.15_195/0.2)] data-[state=active]:text-[oklch(0.8_0.12_195)] h-8 rounded-md font-medium">
+          <TabsTrigger value="work" className="text-xs gap-1.5 data-[state=active]:bg-[oklch(0.85_0.18_90/0.2)] data-[state=active]:text-[oklch(0.88_0.15_90)] h-8 rounded-md font-medium">
             <Briefcase className="w-3.5 h-3.5" />
             Work
           </TabsTrigger>
@@ -187,14 +204,14 @@ function WorkPanel({ period }: { period: Period }) {
     <div className="grid grid-cols-3 gap-4 h-full">
       {/* Stats */}
       <div className="space-y-2">
-        <h4 className="text-xs font-semibold text-[oklch(0.75_0.15_195)] flex items-center gap-1.5">
+        <h4 className="text-xs font-semibold text-[oklch(0.85_0.15_90)] flex items-center gap-1.5">
           <Clock className="w-3.5 h-3.5" />
           Work Stats {period !== "day" && `(${period === "week" ? "Weekly" : "Monthly"} Avg)`}
         </h4>
         <div className="grid grid-cols-2 gap-1.5">
-          <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-2.5 border border-[oklch(0.75_0.15_195/0.2)]">
+          <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-2.5 border border-[oklch(0.85_0.15_90/0.2)]">
             <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Total Time</div>
-            <div className="text-xl font-bold font-mono text-[oklch(0.75_0.15_195)]">{workStats.totalTime}</div>
+            <div className="text-xl font-bold font-mono text-[oklch(0.85_0.15_90)]">{workStats.totalTime}</div>
           </div>
           <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-2.5 border border-[oklch(0.7_0.2_145/0.2)]">
             <div className="text-[9px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
@@ -228,10 +245,11 @@ function WorkPanel({ period }: { period: Period }) {
 
       {/* App Usage Chart - AFK excluded */}
       <div className="space-y-2">
-        <h4 className="text-xs font-semibold text-[oklch(0.75_0.15_195)] flex items-center gap-1.5">
+        <h4 className="text-xs font-semibold text-[oklch(0.85_0.15_90)] flex items-center gap-1.5">
           <Monitor className="w-3.5 h-3.5" />
           App Usage
         </h4>
+
         <div className="h-36">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>

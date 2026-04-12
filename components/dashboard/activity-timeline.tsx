@@ -26,8 +26,8 @@ const activityConfig: Record<string, { label: string; color: string; glow: strin
   },
   DEVELOP: { 
     label: "開発/学習", 
-    color: "oklch(0.75 0.15 195)",
-    glow: "oklch(0.75 0.15 195 / 0.4)"
+    color: "oklch(0.85 0.18 90)",
+    glow: "oklch(0.85 0.18 90 / 0.4)"
   },
   MEDIA: { 
     label: "動画/メディア", 
@@ -63,6 +63,11 @@ const activityConfig: Record<string, { label: string; color: string; glow: strin
     label: "生活", 
     color: "oklch(0.6 0.1 100)",
     glow: "oklch(0.6 0.1 100 / 0.2)"
+  },
+  BATH: { 
+    label: "入浴", 
+    color: "oklch(0.75 0.12 210)",
+    glow: "oklch(0.75 0.12 210 / 0.4)"
   },
   UNOBSERVED: { 
     label: "データなし", 
