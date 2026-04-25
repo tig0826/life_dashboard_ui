@@ -1,108 +1,96 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { TrendingUp, TrendingDown, Minus } from "lucide-react"
+import { 
+  Zap, MonitorPlay, Flame, Footprints, Moon, Brain, 
+  AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight 
+} from "lucide-react"
 
-interface KpiItem {
+export type KpiStatus = "good" | "warning" | "critical" | "neutral"
+
+export interface KpiItem {
+  id: string
   label: string
   value: string | number
-  unit?: string
-  source?: string
-  trend?: "up" | "down" | "neutral"
+  unit: string
+  status: KpiStatus
+  action: string
+  trend?: "up" | "down"
   trendValue?: string
-  color?: "cyan" | "green" | "yellow" | "orange" | "red" | "pink"
+  icon: any
+  color: string
 }
 
-interface KpiBoardProps {
-  kpis: KpiItem[]
-}
-
-const colorMap = {
-  cyan: {
-    text: "text-[oklch(0.8_0.12_195)]",
-    glow: "shadow-[0_0_15px_oklch(0.75_0.15_195/0.4)]",
-    border: "border-[oklch(0.75_0.15_195/0.3)]",
-    bg: "bg-[oklch(0.75_0.15_195/0.08)]",
-  },
-  green: {
-    text: "text-[oklch(0.75_0.18_145)]",
-    glow: "shadow-[0_0_15px_oklch(0.7_0.2_145/0.4)]",
-    border: "border-[oklch(0.7_0.2_145/0.3)]",
-    bg: "bg-[oklch(0.7_0.2_145/0.08)]",
-  },
-  yellow: {
-    text: "text-[oklch(0.88_0.15_90)]",
-    glow: "shadow-[0_0_15px_oklch(0.85_0.18_90/0.4)]",
-    border: "border-[oklch(0.85_0.18_90/0.3)]",
-    bg: "bg-[oklch(0.85_0.18_90/0.08)]",
-  },
-  orange: {
-    text: "text-[oklch(0.75_0.18_60)]",
-    glow: "shadow-[0_0_15px_oklch(0.7_0.2_60/0.4)]",
-    border: "border-[oklch(0.7_0.2_60/0.3)]",
-    bg: "bg-[oklch(0.7_0.2_60/0.08)]",
-  },
-  red: {
-    text: "text-[oklch(0.7_0.2_25)]",
-    glow: "shadow-[0_0_15px_oklch(0.65_0.22_25/0.4)]",
-    border: "border-[oklch(0.65_0.22_25/0.3)]",
-    bg: "bg-[oklch(0.65_0.22_25/0.08)]",
-  },
-  pink: {
-    text: "text-[oklch(0.75_0.15_340)]",
-    glow: "shadow-[0_0_15px_oklch(0.7_0.18_340/0.4)]",
-    border: "border-[oklch(0.7_0.18_340/0.3)]",
-    bg: "bg-[oklch(0.7_0.18_340/0.08)]",
-  },
-}
-
-export function KpiBoard({ kpis }: KpiBoardProps) {
+export function KpiBoard({ kpis }: { kpis: KpiItem[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {kpis.map((kpi, index) => {
-        const colors = colorMap[kpi.color || "cyan"]
-        return (
-          <div
-            key={index}
-            className={cn(
-              "rounded-lg p-3 border",
-              colors.bg,
-              colors.border,
-              colors.glow
-            )}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground">{kpi.label}</span>
-              {kpi.trend && (
-                <div className={cn(
-                  "flex items-center gap-1 text-xs",
-                  kpi.trend === "up" && "text-[oklch(0.7_0.2_145)]",
-                  kpi.trend === "down" && "text-[oklch(0.65_0.22_25)]",
-                  kpi.trend === "neutral" && "text-muted-foreground"
-                )}>
-                  {kpi.trend === "up" && <TrendingUp className="w-3 h-3" />}
-                  {kpi.trend === "down" && <TrendingDown className="w-3 h-3" />}
-                  {kpi.trend === "neutral" && <Minus className="w-3 h-3" />}
-                  <span className="font-mono">{kpi.trendValue}</span>
-                </div>
-              )}
+    <div className="grid grid-cols-3 gap-3 h-full">
+      {kpis.map((kpi) => (
+        <KpiCard key={kpi.id} {...kpi} />
+      ))}
+    </div>
+  )
+}
+
+function KpiCard({ label, value, unit, status, action, trend, trendValue, icon: Icon, color }: KpiItem) {
+  // ステータスに応じた発光色の定義
+  const statusColors = {
+    good: "text-emerald-400 border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_oklch(0.7_0.2_145/0.1)]",
+    warning: "text-amber-400 border-amber-500/30 bg-amber-500/5 shadow-[0_0_15px_oklch(0.85_0.18_90/0.1)]",
+    critical: "text-rose-400 border-rose-500/30 bg-rose-500/5 shadow-[0_0_15px_oklch(0.65_0.22_25/0.1)]",
+    neutral: "text-indigo-400 border-indigo-500/30 bg-indigo-500/5 shadow-[0_0_15px_oklch(0.6_0.18_250/0.1)]",
+  }
+
+  return (
+    <div className={cn(
+      "relative group rounded-xl p-3 border transition-all duration-500 flex flex-col justify-between overflow-hidden",
+      statusColors[status]
+    )}>
+      {/* 背景の極小グリッド演出 */}
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)', backgroundSize: '10px 10px' }} />
+      
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[9px] font-bold uppercase tracking-[0.15em] opacity-70 flex items-center gap-1.5">
+            <Icon className="w-3 h-3" /> {label}
+          </span>
+          {status === "good" ? (
+            <CheckCircle2 className="w-3 h-3 opacity-50" />
+          ) : status !== "neutral" ? (
+            <AlertCircle className="w-3 h-3 animate-pulse" />
+          ) : null}
+        </div>
+
+        <div className="flex items-baseline gap-1 mt-1">
+          <span className="text-2xl font-black font-mono tracking-tighter tabular-nums leading-none">
+            {value}
+          </span>
+          <span className="text-[10px] font-medium opacity-50 uppercase">{unit}</span>
+          
+          {trend && (
+            <div className={cn(
+              "ml-auto flex items-center text-[9px] font-mono",
+              trend === "up" ? "text-emerald-400" : "text-rose-400"
+            )}>
+              {trend === "up" ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
+              {trendValue}
             </div>
-            <div className="flex items-baseline gap-1">
-              <span className={cn("text-2xl font-bold font-mono", colors.text)}>
-                {kpi.value}
-              </span>
-              {kpi.unit && (
-                <span className="text-sm text-muted-foreground">{kpi.unit}</span>
-              )}
-            </div>
-            {kpi.source && (
-              <span className="text-[10px] text-muted-foreground/60 font-mono">
-                via {kpi.source}
-              </span>
-            )}
-          </div>
-        )
-      })}
+          )}
+        </div>
+      </div>
+
+      <div className="relative z-10 mt-3 pt-2 border-t border-white/5">
+        <div className="text-[9px] leading-relaxed opacity-80 font-medium">
+          {action}
+        </div>
+      </div>
+      
+      {/* 底部にステータスバーを配置 */}
+      <div className={cn(
+        "absolute bottom-0 left-0 h-[2px] transition-all duration-700",
+        status === "good" ? "bg-emerald-500 w-full" : 
+        status === "warning" ? "bg-amber-500 w-2/3" : 
+        status === "critical" ? "bg-rose-500 w-1/3 shadow-[0_0_10px_#f43f5e]" : "bg-indigo-500 w-full"
+      )} />
     </div>
   )
 }
