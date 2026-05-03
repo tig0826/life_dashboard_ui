@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Trino } from "trino-client";
 
-// 文字列 "[Walk] 45m (4116 steps, 349kcal) || [Run]..." を配列にパースする
 function parseActivityLogs(logsStr: string) {
   if (!logsStr) return [];
   return logsStr.split(" || ").filter(Boolean);
@@ -10,8 +9,13 @@ function parseActivityLogs(logsStr: string) {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const days = searchParams.get("days") || "90";
-  const dateStr =
-    searchParams.get("date") || new Date().toISOString().split("T")[0];
+
+  // 🚀 修正: 強制的に日本時間（JST）のYYYY-MM-DDを生成する
+  const now = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000); // UTCに9時間足す
+  const defaultDateStr = jstNow.toISOString().split("T")[0];
+
+  const dateStr = searchParams.get("date") || defaultDateStr;
 
   const trino = Trino.create({
     server: process.env.TRINO_SERVER_URL || "http://localhost:8080",
@@ -32,7 +36,9 @@ export async function GET(request: NextRequest) {
           body_fat_pct,
           activity_logs_str,
           weight_7d_avg,
-          resting_heart_rate
+          resting_heart_rate,
+          total_minutes_asleep,  -- 🚀 追加: 睡眠時間
+          total_time_in_bed      -- 🚀 追加: 就床時間（効率計算用）
         FROM life_gold.mrt_fitness_daily_summary
         WHERE target_date BETWEEN DATE '${dateStr}' - interval '${days}' day AND DATE '${dateStr}'
         ORDER BY target_date ASC
@@ -57,6 +63,8 @@ export async function GET(request: NextRequest) {
       activities: parseActivityLogs(row[7] || ""),
       weight7dAvg: row[8] ? Number(row[8]) : null,
       restingHr: Number(row[9] || 0),
+      sleepMins: row[10] ? Number(row[10]) : 0, // 🚀 マッピング追加
+      timeInBed: row[11] ? Number(row[11]) : 0, // 🚀 マッピング追加
     }));
 
     return NextResponse.json(response);
