@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { 
@@ -123,7 +124,7 @@ export function DetailPanel({ date, period, onPeriodChange, mealData, workData, 
       <div className="flex-1 overflow-auto min-h-0">
         <TabsContent value="work" className="mt-0 h-full"><WorkPanel data={workData} /></TabsContent>
         <TabsContent value="media" className="mt-0 h-full"><MediaPanel period={period} /></TabsContent>
-        <TabsContent value="fitness" className="mt-0 h-full"><FitnessPanel data={fitnessData} /></TabsContent>
+        <TabsContent value="fitness" className="mt-0 h-full"><FitnessPanel data={fitnessData} date={date} /></TabsContent>
         <TabsContent value="meals" className="mt-0 h-full"><MealsPanel period={period} data={mealData} /></TabsContent>
         <TabsContent value="location" className="mt-0 h-full"><LocationPanel period={period} /></TabsContent>
       </div>
@@ -193,99 +194,111 @@ function WorkPanel({ data }: { data?: WorkDetails | null }) {
 // --- 5. FitnessPanel ---
 function FitnessPanel({ data }: { data?: FitnessDay[] | null }) {
   const chartData = data || [];
+  
+  // 🚀 親(page.tsx)のフィルターが完璧になったため、黙って配列の最後を取るだけで100%一致する
   const today = chartData.length > 0 ? chartData[chartData.length - 1] : null;
 
   // 歩数解析ロジック
   const stepStats = useMemo(() => {
-    const totalSummary = today?.steps || 0;
-    const active = (today?.activities || []).reduce((sum, log) => {
-      const match = log.match(/(\d+)\s*steps/);
-      return sum + (match ? parseInt(match[1]) : 0);
+    const finalTotal = today?.steps || 0;
+    let active = (today?.activities || []).reduce((sum, log) => {
+      const match = log.match(/(\d+)\s*steps/i);
+      return sum + (match ? parseInt(match[1], 10) : 0);
     }, 0);
-
-    const finalTotal = Math.max(totalSummary, active);
-    const ambient = Math.max(0, finalTotal - active);
+    active = Math.min(active, finalTotal);
+    
+    const ambient = finalTotal - active;
     const ratio = finalTotal > 0 ? (active / finalTotal) * 100 : 0;
-
     return { active, ambient, finalTotal, ratio };
   }, [today]);
 
-  // ★ ウォーキング以外の特別なイベントを抽出
   const specialEvents = useMemo(() => {
     return (today?.activities || []).filter(log => !log.toLowerCase().includes('walk'));
   }, [today]);
 
-  if (chartData.length === 0) return <div className="h-full flex items-center justify-center text-xs opacity-30 font-mono">WAITING FOR FITNESS DATA...</div>;
-
   return (
-    <div className="grid grid-cols-12 gap-3 h-full">
-      <div className="col-span-4 flex flex-col gap-2 min-h-0">
-        <h4 className="text-xs font-semibold text-[oklch(0.7_0.2_145)] shrink-0">Today</h4>
-        
-        {/* カロリーバランス (少し高さを抑えた) */}
-        <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-3 border border-[oklch(0.7_0.2_145/0.2)]">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[9px] font-bold text-[oklch(0.7_0.2_145)] uppercase tracking-widest">Energy Balance</span>
-            <Flame className="w-3.5 h-3.5 text-[oklch(0.7_0.2_145)]" />
+    <div className="grid grid-cols-12 gap-4 h-full min-h-0">
+      {/* 左カラム：今日の詳細 */}
+      <div className="col-span-4 flex flex-col gap-3 min-h-0">
+        <div className="bg-gradient-to-br from-[oklch(0.14_0.02_250)] to-[oklch(0.08_0.01_250)] rounded-2xl border border-white/5 p-4 relative overflow-hidden shrink-0 group shadow-[0_4px_20px_rgba(0,0,0,0.2)]">
+          <div className="absolute -top-10 -right-10 w-32 h-32 bg-[oklch(0.8_0.15_150)]/10 blur-3xl rounded-full transition-opacity opacity-50 group-hover:opacity-100 pointer-events-none" />
+          <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[oklch(0.7_0.15_250)]/10 blur-3xl rounded-full transition-opacity opacity-50 group-hover:opacity-100 pointer-events-none" />
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-[10px] text-foreground/70 uppercase font-bold tracking-[0.2em] flex items-center gap-1.5 z-10">
+              <Flame className="w-3.5 h-3.5 text-[oklch(0.8_0.15_150)]" /> Energy Balance
+            </span>
           </div>
-          <div className={`text-2xl font-black font-mono ${today && today.balance <= 0 ? 'text-[oklch(0.7_0.2_145)]' : 'text-rose-500'}`}>
-            {today && today.balance > 0 ? "+" : ""}{today?.balance}
-            <span className="text-xs font-normal ml-1 text-muted-foreground">kcal</span>
+          <div className="flex items-end justify-between z-10 relative">
+            <div className="flex flex-col">
+              <span className={cn(
+                "text-3xl font-black font-mono tracking-tighter leading-none drop-shadow-[0_0_8px_rgba(255,255,255,0.1)]",
+                (today?.balance || 0) <= 0 ? "text-[oklch(0.8_0.15_150)]" : "text-rose-400"
+              )}>
+                {today && today.balance > 0 ? "+" : ""}{today?.balance || 0}
+              </span>
+              <span className="text-[8px] text-muted-foreground uppercase tracking-widest mt-1.5 ml-0.5">Net (kcal)</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end">
+                <span className="text-xl font-bold font-mono text-[oklch(0.7_0.15_250)]">{today?.burned || 0}</span>
+                <span className="text-[8px] text-muted-foreground uppercase tracking-widest mt-0.5">OUT</span>
+              </div>
+              <div className="w-px h-8 bg-white/10 rounded-full" />
+              <div className="flex flex-col items-start">
+                <span className="text-xl font-bold font-mono text-[oklch(0.5_0.15_280)]">{today?.intake || 0}</span>
+                <span className="text-[8px] text-muted-foreground uppercase tracking-widest mt-0.5">IN</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* ★ 体重・体脂肪を横並びに修正 */}
-        <div className="grid grid-cols-2 gap-2 shrink-0">
-          <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-2.5 border border-white/5">
-            <div className="text-[8px] text-muted-foreground uppercase mb-0.5">Weight</div>
+        <div className="grid grid-cols-2 gap-3 shrink-0">
+          <div className="bg-[oklch(0.12_0.015_250)] rounded-2xl p-3.5 border border-white/5 shadow-sm">
+            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest mb-1.5">Weight</div>
             <div className="flex items-baseline gap-1">
-              <span className="text-lg font-bold font-mono text-[oklch(0.85_0.18_90)]">{today?.weight ? today.weight.toFixed(1) : '--'}</span>
-              <span className="text-[10px] text-muted-foreground">kg</span>
+              <span className="text-2xl font-bold font-mono text-foreground/90">{today?.weight ? today.weight.toFixed(1) : '--'}</span>
+              <span className="text-[10px] text-muted-foreground font-medium">kg</span>
             </div>
           </div>
-          <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-2.5 border border-white/5">
-            <div className="text-[8px] text-muted-foreground uppercase mb-0.5">Body Fat</div>
+          <div className="bg-[oklch(0.12_0.015_250)] rounded-2xl p-3.5 border border-white/5 shadow-sm">
+            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest mb-1.5">Body Fat</div>
             <div className="flex items-baseline gap-1">
-              <span className="text-lg font-bold font-mono text-foreground/80">{today?.bodyFat ? today.bodyFat.toFixed(1) : '--'}</span>
-              <span className="text-[10px] text-muted-foreground">%</span>
+              <span className="text-2xl font-bold font-mono text-foreground/90">{today?.bodyFat ? today.bodyFat.toFixed(1) : '--'}</span>
+              <span className="text-[10px] text-muted-foreground font-medium">%</span>
             </div>
           </div>
         </div>
 
-        {/* 歩数解析 & 特別なイベントのスクロールエリア */}
-        <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-3 border border-white/5 flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div className="flex items-center justify-between mb-2 shrink-0">
+        <div className="bg-[oklch(0.12_0.015_250)] rounded-2xl p-4 border border-white/5 flex-1 flex flex-col min-h-0 overflow-hidden shadow-sm relative">
+          <div className="flex items-center justify-between mb-3 shrink-0">
             <div className="flex items-center gap-1.5">
-              <Footprints className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Step Analysis</span>
+              <Footprints className="w-4 h-4 text-[oklch(0.6_0.18_250)]" />
+              <span className="text-[10px] font-bold text-foreground/70 uppercase tracking-widest">Step Analysis</span>
             </div>
-            <span className="text-sm font-black font-mono text-foreground tracking-tight">
+            <span className="text-xl font-black font-mono text-foreground tracking-tight">
               {stepStats.finalTotal.toLocaleString()}
             </span>
           </div>
-
-          <div className="space-y-2 shrink-0">
-            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden p-[px] border border-white/5">
+          <div className="space-y-2.5 shrink-0 mt-1">
+            <div className="h-2 w-full bg-[oklch(0.08_0.01_250)] rounded-full overflow-hidden p-[1px] border border-white/5">
               <div 
-                className="h-full rounded-full transition-all duration-1000 bg-indigo-500 shadow-[0_0_8px_oklch(0.6_0.18_250/0.4)]"
+                className="h-full rounded-full transition-all duration-1000 ease-out bg-gradient-to-r from-[oklch(0.6_0.18_250)] to-[oklch(0.7_0.15_280)] shadow-[0_0_10px_rgba(139,92,246,0.5)]"
                 style={{ width: `${stepStats.ratio}%` }}
               />
             </div>
-            <div className="flex justify-between text-[8px] font-mono text-muted-foreground tracking-tighter uppercase px-0.5">
-              <span>Active: {stepStats.active.toLocaleString()}</span>
+            <div className="flex justify-between text-[9px] font-mono text-muted-foreground tracking-tighter uppercase px-0.5">
+              <span className="text-[oklch(0.7_0.15_280)]">Active: {stepStats.active.toLocaleString()}</span>
               <span>Ambient: {stepStats.ambient.toLocaleString()}</span>
             </div>
           </div>
-
-          {/* ★ 特別なアクティビティ（Walk以外）がある場合のみ表示 */}
           {specialEvents.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/5 flex-1 flex flex-col min-h-0">
-              <div className="text-[8px] text-[oklch(0.75_0.15_195)] font-bold uppercase tracking-widest mb-2 shrink-0">Special Events</div>
-              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+            <div className="mt-4 pt-4 border-t border-white/5 flex-1 flex flex-col min-h-0">
+              <div className="text-[9px] text-[oklch(0.8_0.15_150)] font-bold uppercase tracking-widest mb-2 shrink-0">Special Events</div>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                 {specialEvents.map((log, i) => (
-                  <div key={i} className="text-[9px] bg-indigo-500/10 border border-indigo-500/20 rounded px-2 py-1.5 text-indigo-100 flex items-center gap-2">
-                    <Activity className="w-3 h-3 text-indigo-400 shrink-0" />
-                    <span className="truncate leading-tight">{log}</span>
+                  <div key={i} className="text-[10px] bg-white/5 border border-white/5 rounded-lg px-2.5 py-2 text-foreground/80 flex items-center gap-2">
+                    <Flame className="w-3.5 h-3.5 text-[oklch(0.8_0.15_150)] shrink-0" />
+                    <span className="truncate leading-relaxed">{log}</span>
                   </div>
                 ))}
               </div>
@@ -294,37 +307,82 @@ function FitnessPanel({ data }: { data?: FitnessDay[] | null }) {
         </div>
       </div>
 
-      {/* 右側のチャートエリア（幅を少し調整 9 -> 8） */}
-      <div className="col-span-8 flex flex-col h-full gap-2">
-        {/* チャート部分はそのまま（必要に応じて col-span を微調整） */}
-        <div className="h-[62%] bg-[oklch(0.1_0.015_250)] rounded-xl p-4 border border-white/5 relative">
-          <div className="absolute top-4 left-6 text-[10px] font-bold text-muted-foreground uppercase z-10">Weight & Fat Trend</div>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 20, right: 30, bottom: 0, left: -20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#666' }} tickFormatter={(v) => v.slice(5)} minTickGap={40} axisLine={false} />
-              <YAxis yAxisId="left" domain={['dataMin - 1', 'dataMax + 1']} hide />
-              <YAxis yAxisId="right" orientation="right" domain={['dataMin - 2', 'dataMax + 2']} hide />
-              <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #333', fontSize: '10px' }} formatter={(v: any, n: string) => n==="weight"?[v+"kg","体重"]:n==="bodyFat"?[v+"%","体脂肪"]: [v,n]} />
-              <Line yAxisId="left" type="monotone" dataKey="weight" stroke="oklch(0.85 0.18 90)" strokeWidth={3} dot={false} connectNulls name="weight" />
-              <Line yAxisId="left" type="monotone" dataKey="weight7dAvg" stroke="oklch(0.85 0.18 90)" strokeDasharray="4 4" strokeWidth={1} dot={false} connectNulls opacity={0.3} name="weight7dAvg" />
-              <Line yAxisId="right" type="monotone" dataKey="bodyFat" stroke="oklch(0.75 0.15 195)" strokeWidth={2} dot={false} connectNulls name="bodyFat" />
-            </LineChart>
-          </ResponsiveContainer>
+      {/* 🚀 右側のチャートエリア（1つの統合された巨大パネル） */}
+      <div className="col-span-8 bg-[oklch(0.12_0.015_250)] rounded-2xl border border-white/5 shadow-sm flex flex-col min-h-0 h-full p-4 gap-2 relative">
+        
+        {/* 上段：体重トレンド (少し領域を譲る flex-[3]) */}
+        <div className="flex-[3] relative min-h-0">
+          <div className="absolute top-0 left-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest z-10">Weight & Fat Trend</div>
+          
+          <div className="absolute inset-0 top-6 bottom-0 left-0 right-2">
+            <ResponsiveContainer width="100%" height="100%">
+              {/* 🚀 左右のマージンを下のチャートと完全に一致させた */}
+              <LineChart data={chartData} margin={{ top: 5, right: 0, bottom: -15, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                {/* 🚀 tick={false} で日付を消し去る */}
+                <XAxis dataKey="date" height={10} tick={false} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="left" domain={['dataMin - 0.2', 'dataMax + 0.2']} hide />
+                <YAxis yAxisId="right" orientation="right" domain={['dataMin - 0.2', 'dataMax + 0.2']} hide />
+                
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', backdropFilter: 'blur(8px)' }} 
+                  formatter={(v: any, n: string) => n==="weight"?[v+"kg","体重"]:n==="bodyFat"?[v+"%","体脂肪"]: [v,n]} 
+                  labelFormatter={(label) => `Date: ${label}`}
+                  cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
+                />
+                <Line yAxisId="left" type="monotone" dataKey="weight" stroke="oklch(0.85 0.18 90)" strokeWidth={3} dot={false} activeDot={{ r: 5, strokeWidth: 0 }} connectNulls name="weight" style={{ filter: 'drop-shadow(0px 4px 6px rgba(0,0,0,0.3))' }} />
+                <Line yAxisId="left" type="monotone" dataKey="weight7dAvg" stroke="oklch(0.85 0.18 90)" strokeDasharray="4 4" strokeWidth={1.5} dot={false} connectNulls opacity={0.4} name="weight7dAvg" />
+                <Line yAxisId="right" type="monotone" dataKey="bodyFat" stroke="oklch(0.75 0.15 195)" strokeWidth={2.5} dot={false} activeDot={{ r: 4, strokeWidth: 0 }} connectNulls name="bodyFat" style={{ filter: 'drop-shadow(0px 4px 6px rgba(0,0,0,0.3))' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-        <div className="h-[36%] bg-[oklch(0.1_0.015_250)] rounded-xl p-4 border border-white/5 relative">
-          <div className="absolute top-3 left-6 text-[9px] font-bold text-muted-foreground uppercase z-10">Daily Calorie Balance</div>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#666' }} tickFormatter={(v) => v.slice(5)} minTickGap={40} axisLine={false} />
-              <YAxis hide domain={[0, 4500]} />
-              <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #333', fontSize: '10px' }} />
-              <Area type="step" dataKey="balance" fill="oklch(0.7 0.2 145)" stroke="none" fillOpacity={0.1} />
-              <Bar dataKey="intake" fill="oklch(0.7 0.2 60)" opacity={0.3} barSize={4} />
-              <Bar dataKey="burned" fill="oklch(0.65 0.22 25)" opacity={0.3} barSize={4} />
-            </ComposedChart>
-          </ResponsiveContainer>
+
+        {/* 🚀 うっすらとした境界線で上下を仕切る */}
+        <div className="w-full h-px bg-white/5 my-1" />
+        
+        {/* 下段：カロリー収支 (領域を奪って広く flex-[4]) */}
+        <div className="flex-[4] relative min-h-0">
+          <div className="absolute top-0 left-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest z-10">Daily Calorie Balance</div>
+          
+          <div className="absolute inset-0 top-6 bottom-0 left-0 right-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 5, right: 0, bottom: -15, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                <XAxis dataKey="date" height={10} tick={false} axisLine={false} tickLine={false} />
+                <YAxis hide domain={['auto', 'auto']} />
+                
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', backdropFilter: 'blur(8px)' }}
+                  formatter={(val: number, name: string) => {
+                    if (name === "Net Balance (Daily)") {
+                      const realVal = val * -1;
+                      return [realVal > 0 ? `+${realVal}` : realVal, "Net Balance (Daily)"];
+                    }
+                    return [Math.abs(val), name];
+                  }}
+                  labelFormatter={(label) => `Date: ${label}`}
+                  cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                />
+                
+                <Bar dataKey="burned" name="Burned (Out)" fill="oklch(0.6 0.2 250)" radius={[4, 4, 0, 0]} maxBarSize={20} opacity={0.9} />
+                <Bar dataKey={(d) => d.intake * -1} name="Intake (In)" fill="oklch(0.4 0.15 280)" radius={[0, 0, 4, 4]} maxBarSize={20} opacity={0.7} />
+                
+                <Line 
+                  type="monotone" 
+                  dataKey={(d) => d.balance * -1} 
+                  name="Net Balance (Daily)" 
+                  stroke="oklch(0.8 0.15 150)" 
+                  strokeWidth={3} 
+                  dot={false} 
+                  activeDot={{ r: 5, fill: '#0f172a', stroke: 'oklch(0.8 0.15 150)', strokeWidth: 2 }} 
+                  style={{ filter: 'drop-shadow(0px 4px 6px rgba(0,0,0,0.6))' }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         </div>
+
       </div>
     </div>
   );

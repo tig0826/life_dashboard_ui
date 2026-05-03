@@ -2,8 +2,9 @@
 
 import { useMemo, useState, useEffect } from "react"
 import { 
-  Bed, Briefcase, Code, MonitorPlay, Gamepad2, BookOpen, 
-  MessageCircle, Navigation, Globe, Coffee, Droplets, HelpCircle, Activity
+  Moon, Bath, Bed, Briefcase, Terminal, Code, MonitorPlay, Gamepad2, BookOpen, 
+  BookOpenText, Library, Ghost, MessageSquare, MapPin, MessageCircle, Navigation, Globe, Coffee,
+  Droplets, HelpCircle, Activity
 } from "lucide-react"
 
 interface ActivityBlock {
@@ -17,24 +18,35 @@ interface ActivityTimelineProps {
   activities: ActivityBlock[]
 }
 
-// アイコンをマッピングに追加
+
 const activityConfig: Record<string, { label: string; color: string; glow: string; icon: any }> = {
-  SLEEP: { label: "睡眠", color: "oklch(0.55 0.18 250)", glow: "oklch(0.55 0.18 250 / 0.6)", icon: Bed },
-  WORK: { label: "仕事", color: "oklch(0.65 0.2 145)", glow: "oklch(0.65 0.2 145 / 0.6)", icon: Briefcase },
-  DEVELOP: { label: "開発/学習", color: "oklch(0.85 0.18 90)", glow: "oklch(0.85 0.18 90 / 0.6)", icon: Code },
-  MEDIA: { label: "動画/メディア", color: "oklch(0.65 0.18 340)", glow: "oklch(0.65 0.18 340 / 0.6)", icon: MonitorPlay },
-  GAME: { label: "ゲーム", color: "oklch(0.6 0.2 300)", glow: "oklch(0.6 0.2 300 / 0.6)", icon: Gamepad2 },
-  MANGA: { label: "漫画", color: "oklch(0.7 0.2 60)", glow: "oklch(0.7 0.2 60 / 0.6)", icon: BookOpen },
-  SOCIAL: { label: "SNS/連絡", color: "oklch(0.8 0.15 20)", glow: "oklch(0.8 0.15 20 / 0.6)", icon: MessageCircle },
-  OUTING: { label: "外出/移動", color: "oklch(0.7 0.12 160)", glow: "oklch(0.7 0.12 160 / 0.6)", icon: Navigation },
-  BROWSING: { label: "ブラウジング", color: "oklch(0.5 0.05 250)", glow: "oklch(0.5 0.05 250 / 0.4)", icon: Globe },
-  LIFE: { label: "生活", color: "oklch(0.6 0.1 100)", glow: "oklch(0.6 0.1 100 / 0.4)", icon: Coffee },
-  BATH: { label: "入浴", color: "oklch(0.75 0.12 210)", glow: "oklch(0.75 0.12 210 / 0.6)", icon: Droplets },
-  UNOBSERVED: { label: "データなし", color: "oklch(0.25 0.02 250)", glow: "oklch(0.25 0.02 250 / 0)", icon: HelpCircle },
+  // 💤 休息・回復系 (青・シアン系)
+  SLEEP: { label: "睡眠", color: "oklch(0.85 0.02 250)", glow: "oklch(0.85 0.02 250 / 0.5)", icon: Moon }, // 🚀 ネオンシルバー（わずかに青みを帯びたクールな白銀）
+  BATH: { label: "入浴", color: "oklch(0.80 0.15 220)", glow: "oklch(0.80 0.15 220 / 0.6)", icon: Bath }, // 明るいシアン
+  
+  // 💻 生産性・業務系 (緑・黄系)
+  WORK: { label: "仕事", color: "oklch(0.65 0.20 145)", glow: "oklch(0.65 0.20 145 / 0.6)", icon: Briefcase }, // ピュアグリーン
+  DEVELOP: { label: "開発/学習", color: "oklch(0.85 0.18 95)", glow: "oklch(0.85 0.18 95 / 0.6)", icon: Terminal }, // ブライトイエロー
+  
+  // 🎮 エンタメ系 (赤・紫・ピンク系 - 互いに被らないよう極端に散らす)
+  MEDIA: { label: "動画/メディア", color: "oklch(0.60 0.25 20)", glow: "oklch(0.60 0.25 20 / 0.7)", icon: MonitorPlay }, // YouTubeレッド
+  GAME: { label: "ゲーム", color: "oklch(0.60 0.25 300)", glow: "oklch(0.60 0.25 300 / 0.6)", icon: Gamepad2 }, // ディープパープル
+  MANGA: { label: "漫画", color: "oklch(0.65 0.25 340)", glow: "oklch(0.65 0.25 340 / 0.6)", icon: Library }, // ホットピンク
+  
+  // 📚 インプット系 (オレンジ系)
+  READING: { label: "読書", color: "oklch(0.70 0.20 60)", glow: "oklch(0.70 0.20 60 / 0.6)", icon: BookOpenText }, // オレンジ
+  
+  // 🚶‍♂️ 生活・移動系 (絶対に他と被らない無彩色)
+  OUTING: { label: "外出/移動", color: "oklch(0.60 0.15 180)", glow: "oklch(0.60 0.15 180 / 0.6)", icon: MapPin }, // 🚀 ディープ・ティール（緑と青の境界にある美しいビリジアン系）
+  LIFE: { label: "生活", color: "oklch(0.50 0.05 130)", glow: "oklch(0.50 0.05 130 / 0.3)", icon: Coffee }, // 暗いオリーブ
+  
+  // 📱 その他・ノイズ系 (目立たない低彩度の暗色)
+  SOCIAL: { label: "SNS/連絡", color: "oklch(0.40 0.08 290)", glow: "oklch(0.40 0.08 290 / 0.2)", icon: MessageSquare }, // 暗いグレープ
+  BROWSING: { label: "ブラウジング", color: "oklch(0.50 0.08 250)", glow: "oklch(0.50 0.08 250 / 0.3)", icon: Globe }, // 暗いスレートブルー
+  
+  // 👻 未観測
+  UNOBSERVED: { label: "データなし", color: "oklch(0.25 0.02 250)", glow: "oklch(0.25 0.02 250 / 0)", icon: Ghost },
 }
-
-const defaultStyle = { label: "その他", color: "oklch(0.35 0.02 250)", glow: "oklch(0.35 0.02 250 / 0.2)", icon: Activity }
-
 // 時間表記のフォーマット (例: 14.5 -> "14:30")
 const formatHour = (hourFloat: number) => {
   const h = Math.floor(hourFloat)
@@ -125,7 +137,7 @@ export function ActivityTimeline({ date, activities }: ActivityTimelineProps) {
           }}
         >
           {consolidatedBlocks.map((block, index) => {
-            const config = activityConfig[block.type] || defaultStyle
+            const config = activityConfig[block.type] || activityConfig.UNOBSERVED
             const width = (block.duration / 24) * 100
             const Icon = config.icon
             
