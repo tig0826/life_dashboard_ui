@@ -1,15 +1,15 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { useChat } from '@ai-sdk/react'
 import { format, subDays, addDays } from "date-fns"
 import { ja } from "date-fns/locale"
 import { 
-  Activity, Zap, MonitorPlay, Flame, Footprints, Moon, Brain, Terminal
+  Activity, Zap, MonitorPlay, Flame, Footprints, Moon, Brain
 } from "lucide-react"
 import { KpiBoard, type KpiItem, type KpiStatus } from "@/components/dashboard/kpi-board"
 import { ActivityTimeline } from "@/components/dashboard/activity-timeline"
 import { AiFeedback } from "@/components/dashboard/ai-feedback"
+import { AiChatPanel } from "@/components/dashboard/ai-chat-panel"
 import { DetailPanel } from "@/components/dashboard/detail-panel"
 import { DatePicker } from "@/components/dashboard/date-picker"
 import { PeriodSelector, type Period } from "@/components/dashboard/period-selector"
@@ -23,15 +23,16 @@ type DailyPayload = {
 
 type AiFeedbackSlot = "morning" | "noon" | "night"
 
-type AiFeedbackItem = {
-  date: string
-  slot: AiFeedbackSlot
-  generatedAt: string
-  messages: {
-    type: "positive" | "warning" | "insight"
-    message: string
-  }[]
+type FeedbackMessage = {
+  type: "positive" | "warning" | "insight"
+  message: string
 }
+
+type AiFeedbackBySlot = Record<AiFeedbackSlot, {
+  generatedAt: string
+  messages: FeedbackMessage[]
+  model: string
+} | undefined>
 
 type AiContext = {
   date: string
@@ -49,77 +50,51 @@ type AiContext = {
 
 
 
-const sampleFeedback = [
-  { type: "positive" as const, message: "作業集中時間が前日比+15%向上。深夜のPC使用を控えた効果が出ています。" },
-  { type: "warning" as const, message: "今週の野菜摂取量が目標の60%。夕食にサラダ追加を推奨します。" },
-  { type: "insight" as const, message: "睡眠スコアと翌日の作業効率に強い相関を検出。22時就寝が最適パターンです。" },
-]
 
 
 function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) {
   const today = currentData.fitness
 
-  const sleepHours = today?.sleepMins
-    ? today.sleepMins / 60
-    : null
+  const round1 = (v: number | null | undefined) =>
+    v != null ? Math.round(v * 10) / 10 : null
 
-  const steps = today?.steps ?? null
-  const calories = today?.balance ?? null
-
-  const workScore =
-    typeof currentData?.work?.work?.score === "number"
-      ? currentData.work.work.score
-      : null
-
-  // --- 過去7日平均との差 ---
-  const last7 = fitnessCache.slice(-7)
-
-  const avg = (arr: number[]) =>
-    arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null
-
-  const avgSteps = avg(last7.map((d) => d.steps).filter(Boolean))
-  const avgSleep = avg(last7.map((d) => d.sleepMins).filter(Boolean))
-
-  const comparison: string[] = []
-
-  if (steps && avgSteps) {
-    if (steps > avgSteps) comparison.push("歩数が平均より多い")
-    else comparison.push("歩数が平均より少ない")
+  // 今日
+  const todayCtx = {
+    sleep_hours: today?.sleepMins ? round1(today.sleepMins / 60) : null,
+    steps: today?.steps ?? null,
+    calorie_balance: today?.balance ?? null,
+    resting_hr: today?.restingHr ?? null,
+    work_score: typeof currentData?.work?.work?.score === "number" ? currentData.work.work.score : null,
+    dev_score: typeof currentData?.work?.dev?.score === "number" ? currentData.work.dev.score : null,
   }
 
-  if (sleepHours && avgSleep) {
-    const avgSleepH = avgSleep / 60
-    if (sleepHours > avgSleepH) comparison.push("睡眠が平均より長い")
-    else comparison.push("睡眠が平均より短い")
-  }
+  // 過去14日の日別データ（日付降順）
+  const sorted = [...fitnessCache].sort((a, b) => b.date.localeCompare(a.date))
+  const past14 = sorted.slice(0, 14).map((d) => ({
+    date: d.date,
+    sleep_hours: d.sleepMins ? round1(d.sleepMins / 60) : null,
+    steps: d.steps ?? null,
+    calorie_balance: d.balance ?? null,
+    resting_hr: d.restingHr ?? null,
+  }))
 
-  // --- 仮説（ここが一番重要） ---
-  const insights: string[] = []
-
-  if (sleepHours && sleepHours > 7) {
-    insights.push("睡眠が十分で集中力向上に寄与している可能性")
-  }
-
-  if (steps && steps < 3000) {
-    insights.push("活動量不足でパフォーマンス低下の可能性")
-  }
-
-  if (calories && calories < -800) {
-    insights.push("エネルギー不足が集中力低下の原因の可能性")
+  // 過去7日平均
+  const last7 = sorted.slice(0, 7)
+  const avg = (vals: (number | null)[]) => {
+    const valid = vals.filter((v): v is number => v != null)
+    return valid.length ? round1(valid.reduce((a, b) => a + b, 0) / valid.length) : null
   }
 
   return {
-    date: dateStr,
-    today: {
-      sleepHours,
-      steps,
-      calories,
-      workScore,
+    target_date: dateStr,
+    today: todayCtx,
+    past_14_days: past14,
+    averages_7d: {
+      sleep_hours: avg(last7.map((d) => d.sleepMins ? d.sleepMins / 60 : null)),
+      steps: avg(last7.map((d) => d.steps)),
+      calorie_balance: avg(last7.map((d) => d.balance)),
+      resting_hr: avg(last7.map((d) => d.restingHr)),
     },
-    comparison: {
-      vs7d: comparison,
-    },
-    insights,
   }
 }
 
@@ -127,12 +102,24 @@ export default function LifeDashboard() {
   // 🚀 1. ステート管理
   const [dailyCache, setDailyCache] = useState<Record<string, DailyPayload>>({})
   const [fitnessCache, setFitnessCache] = useState<any[]>([])
+  const [feedbackCache, setFeedbackCache] = useState<Record<string, AiFeedbackBySlot>>({})
+  const [selectedFeedbackSlot, setSelectedFeedbackSlot] = useState<AiFeedbackSlot | null>(null)
+  const [chatHistory, setChatHistory] = useState<any[]>(() => {
+    if (typeof window === "undefined") return []
+    try {
+      const saved = localStorage.getItem("chat-messages")
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
 
   // 🚀 2. ロック機構
   const fetchedDaily = useRef<Set<string>>(new Set())
   const fetchingDaily = useRef<Set<string>>(new Set())
-  const fetchedFitnessDates = useRef<Set<string>>(new Set()) 
+  const fetchedFitnessDates = useRef<Set<string>>(new Set())
   const fetchingFitness = useRef<Set<string>>(new Set())
+  const fetchedFeedback = useRef<Set<string>>(new Set())
 
   // 🚀 3. UI制御ステート
   const [selectedDate, setSelectedDate] = useState(new Date())
@@ -203,6 +190,29 @@ export default function LifeDashboard() {
     }
   }, [])
 
+  const fetchFeedback = useCallback(async (dateStr: string) => {
+    if (fetchedFeedback.current.has(dateStr)) return
+
+    fetchedFeedback.current.add(dateStr)
+    try {
+      const res = await fetch(`/api/feedback?date=${dateStr}`)
+      if (!res.ok) return
+      const data = await res.json()
+      setFeedbackCache(prev => ({ ...prev, [dateStr]: data }))
+      const latest = (["night", "noon", "morning"] as const).find(s => data[s])
+      if (latest) setSelectedFeedbackSlot(latest)
+    } catch (e) {
+      console.error(`Feedback fetch error for ${dateStr}:`, e)
+    }
+  }, [])
+
+  const handleMessagesChange = useCallback((messages: any[]) => {
+    setChatHistory(messages)
+    try {
+      localStorage.setItem("chat-messages", JSON.stringify(messages.slice(-100)))
+    } catch {}
+  }, [])
+
   useEffect(() => {
     if (!mounted) return
 
@@ -211,8 +221,9 @@ export default function LifeDashboard() {
 
       setIsLoading(true)
       await Promise.all([
-        fetchDailyBulk(dStr, 14), 
-        fetchFitnessBulk(dStr) 
+        fetchDailyBulk(dStr, 14),
+        fetchFitnessBulk(dStr),
+        fetchFeedback(dStr),
       ])
       setIsLoading(false)
 
@@ -223,7 +234,14 @@ export default function LifeDashboard() {
     }
 
     loadData()
-  }, [selectedDate, mounted, fetchDailyBulk, fetchFitnessBulk])
+  }, [selectedDate, mounted, fetchDailyBulk, fetchFitnessBulk, fetchFeedback])
+
+  useEffect(() => {
+    const dStr = format(selectedDate, "yyyy-MM-dd")
+    const fb = feedbackCache[dStr]
+    const latest = fb && (["night", "noon", "morning"] as const).find(s => fb[s])
+    setSelectedFeedbackSlot(latest ?? null)
+  }, [selectedDate, feedbackCache])
 
   const currentData = useMemo(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
@@ -240,17 +258,26 @@ export default function LifeDashboard() {
 
   const aiContext = useMemo(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
-    return buildAiContext(currentData, fitnessCache, dStr)
-  }, [selectedDate, currentData, fitnessCache])
+    const base = buildAiContext(currentData, fitnessCache, dStr)
+
+    // 今日のAI FBメッセージを含める
+    const fb = feedbackCache[dStr]
+    const aiFeedbackToday = fb
+      ? (["morning", "noon", "night"] as const)
+          .filter(s => fb[s])
+          .map(s => ({ slot: s, messages: fb[s]!.messages }))
+      : []
+
+    // 直近20件のチャット履歴（アシスタントに記憶させる）
+    const recentChat = chatHistory.slice(-20).map(m => ({
+      role: m.role,
+      text: m.parts?.filter((p: any) => p.type === "text").map((p: any) => p.text).join("") ?? "",
+    }))
+
+    return { ...base, ai_feedback_today: aiFeedbackToday, recent_chat: recentChat }
+  }, [selectedDate, currentData, fitnessCache, feedbackCache, chatHistory])
 
 
-  // 🚀【重要】真の v5 アーキテクチャ：入力は自前で管理し、sendMessage と messages のみをフックから抽出する
-  const [input, setInput] = useState("");
-  const { messages, sendMessage, status, error } = useChat({
-    api: "/api/chat",
-  })
-
-  const isChatLoading = status === 'submitted' || status === 'streaming';
 
   const kpiData: KpiItem[] = useMemo(() => {
     const { fitness, work, meals } = currentData
@@ -270,7 +297,17 @@ export default function LifeDashboard() {
       return "critical"
     }
 
-    const totalMediaMins = 168 
+    const ENT_KPI_CATS: Record<string, string> = { MEDIA: "動画", MANGA: "漫画", GAME: "ゲーム", SOCIAL: "SNS" }
+    const ENT_KPI_COLORS: Record<string, string> = {
+      MEDIA: "oklch(0.60 0.25 20)", MANGA: "oklch(0.65 0.25 340)",
+      GAME: "oklch(0.60 0.25 300)", SOCIAL: "oklch(0.45 0.10 290)",
+    }
+    const entByCat: Record<string, number> = {}
+    for (const act of currentData.activities) {
+      if (!(act.cat_main in ENT_KPI_CATS)) continue
+      entByCat[act.cat_main] = (entByCat[act.cat_main] ?? 0) + (act.endHour - act.startHour) * 60
+    }
+    const totalMediaMins = Math.round(Object.values(entByCat).reduce((a, b) => a + b, 0))
     const mediaProgress = Math.max(0, 100 - (totalMediaMins / 240) * 100)
 
     const netCal = fitness?.balance ?? "-"
@@ -340,23 +377,25 @@ export default function LifeDashboard() {
         action: maxScore >= 85 ? "High performance maintained." : "Room for deep focus.", 
         icon: Zap
       },
-      { 
-        id: "media", 
-        label: "Media", 
-        titleColor: "oklch(0.75 0.15 195)",
-        value: (totalMediaMins / 60).toFixed(1), 
-        unit: "h", 
-        status: totalMediaMins < 120 ? "good" : totalMediaMins < 240 ? "warning" : "critical",
+      {
+        id: "media",
+        label: "Leisure",
+        titleColor: "oklch(0.60 0.25 20)",
+        value: totalMediaMins === 0 ? "-" : (totalMediaMins / 60).toFixed(1),
+        unit: totalMediaMins === 0 ? undefined : "h",
+        status: totalMediaMins === 0 ? "neutral" : totalMediaMins < 120 ? "good" : totalMediaMins < 240 ? "warning" : "critical",
         behavior: "negative",
         progress: mediaProgress,
-        action: (
-          <div className="flex items-center gap-2 font-mono text-[8px]">
-            <span className="text-rose-400">YT:1.2h</span>
-            <span className="text-cyan-400">UN:1.0h</span>
-            <span className="text-lime-400">DZ:0.3h</span>
+        action: totalMediaMins === 0 ? "No leisure today." : (
+          <div className="flex items-center gap-1.5 font-mono text-[8px]">
+            {Object.entries(entByCat).sort((a, b) => b[1] - a[1]).map(([cat, min]) => (
+              <span key={cat} className="whitespace-nowrap" style={{ color: ENT_KPI_COLORS[cat] }}>
+                {ENT_KPI_CATS[cat]}{(min / 60).toFixed(1)}h
+              </span>
+            ))}
           </div>
-        ), 
-        icon: MonitorPlay 
+        ),
+        icon: MonitorPlay
       },
       { 
         id: "calorie", 
@@ -475,100 +514,68 @@ export default function LifeDashboard() {
             </div>
           </div>
 
-          <div className="cyber-card-green rounded-xl p-3 flex flex-col min-h-0" style={{ flex: '0 0 auto', maxHeight: '26%' }}>
-            <h2 className="text-xs font-semibold text-[oklch(0.7_0.2_145)] mb-2 shrink-0">Today&apos;s AI Feedback</h2>
-            <div className="flex-1 overflow-auto">
-              <AiFeedback feedback={sampleFeedback} />
-            </div>
+          <div className="cyber-card-green rounded-xl p-3 shrink-0" style={{ maxHeight: '32%' }}>
+            {(() => {
+              const dStr = format(selectedDate, "yyyy-MM-dd")
+              const fb = feedbackCache[dStr]
+              const slotLabels: { key: AiFeedbackSlot; label: string }[] = [
+                { key: "morning", label: "朝" },
+                { key: "noon",    label: "昼" },
+                { key: "night",   label: "夜" },
+              ]
+              const activeSlot = selectedFeedbackSlot
+              const messages = activeSlot ? fb?.[activeSlot]?.messages ?? [] : []
+              const generatedAt = activeSlot ? fb?.[activeSlot]?.generatedAt : null
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-xs font-semibold text-[oklch(0.7_0.2_145)]">AI Feedback</h2>
+                    <div className="flex items-center gap-1">
+                      {slotLabels.map(({ key, label }) => {
+                        const available = !!fb?.[key]
+                        const active = activeSlot === key
+                        return (
+                          <button
+                            key={key}
+                            disabled={!available}
+                            onClick={() => setSelectedFeedbackSlot(key)}
+                            className={[
+                              "text-[10px] px-2 py-0.5 rounded border transition-all",
+                              active
+                                ? "border-[oklch(0.7_0.2_145/0.8)] bg-[oklch(0.7_0.2_145/0.15)] text-[oklch(0.85_0.18_145)] shadow-[0_0_6px_oklch(0.7_0.2_145/0.3)]"
+                                : available
+                                  ? "border-[oklch(0.7_0.2_145/0.3)] text-[oklch(0.7_0.2_145/0.7)] hover:border-[oklch(0.7_0.2_145/0.6)] hover:text-[oklch(0.8_0.2_145)]"
+                                  : "border-[oklch(0.5_0.05_145/0.2)] text-[oklch(0.5_0.05_145/0.3)] cursor-not-allowed",
+                            ].join(" ")}
+                          >
+                            {label}
+                          </button>
+                        )
+                      })}
+                      {generatedAt && (
+                        <span className="text-[9px] text-muted-foreground font-mono ml-1">{String(generatedAt).slice(11, 16)}</span>
+                      )}
+                    </div>
+                  </div>
+                  {isLoading ? (
+                    <p className="text-[11px] text-muted-foreground italic">Loading...</p>
+                  ) : !activeSlot || messages.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground italic">未生成 (朝8時・昼13時・夜22時)</p>
+                  ) : (
+                    <AiFeedback feedback={messages} />
+                  )}
+                </>
+              )
+            })()}
           </div>
 
           <div className="flex-1 cyber-card rounded-xl p-3 flex flex-col min-h-0">
-            <div className="text-[10px] text-[oklch(0.75_0.15_195)] mb-2 font-semibold flex items-center justify-between">
-              <span>Ask AI Assistant</span>
-              {isChatLoading && <span className="text-[oklch(0.7_0.2_60)] animate-pulse">Thinking...</span>}
-            </div>
-            
-            {/* メッセージ履歴エリア */}
-            <div className="flex-1 overflow-auto mb-3 space-y-3 pr-2">
-              {messages.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">
-                  What insights do you need from today's log?
-                </p>
-              )}
-
-              {messages.map((m) => {
-                const text =
-                  m.parts
-                    ?.filter((part) => part.type === "text")
-                    .map((part: any) => part.text)
-                    .join("") ?? ""
-
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
-                  >
-                    <div
-                      className={`
-                        inline-block p-2.5 rounded-lg text-xs leading-relaxed max-w-[90%] whitespace-pre-wrap
-                        ${
-                          m.role === "user"
-                            ? "bg-[oklch(0.75_0.15_195/0.15)] text-[oklch(0.75_0.15_195)] border border-[oklch(0.75_0.15_195/0.3)]"
-                            : "bg-[oklch(0.12_0.02_250)] text-foreground/90 border border-[oklch(0.25_0.03_250)]"
-                        }
-                      `}
-                    >
-                      {text}
-                    </div>
-                  </div>
-                )
-              })}
-              {error && (
-                <div className="text-xs text-rose-400 border border-rose-500/30 rounded p-2">
-                AI API error: {error.message}
-                </div>
-              )}
-            </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-
-                  const text = input.trim()
-                  if (!text) return
-                  if (isChatLoading) return
-                  if (status !== "ready") return
-
-                  sendMessage(
-                    {
-                      role: "user",
-                      parts: [{ type: "text", text }],
-                    },
-                    {
-                      body: {
-                        contextData: aiContext,
-                      },
-                    }
-                  )
-
-                  setInput("")
-                }}
-                className="flex gap-2 shrink-0"
-              >
-              <input
-                value={input} 
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Why was my focus low yesterday?"
-                className="flex-1 bg-input border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[oklch(0.75_0.15_195/0.5)] transition-colors"
-                disabled={isChatLoading}
-              />
-              <button 
-                type="submit" 
-                disabled={isChatLoading || !input.trim()} 
-                className="px-3 py-2 bg-[oklch(0.75_0.15_195/0.15)] text-[oklch(0.75_0.15_195)] border border-[oklch(0.75_0.15_195/0.3)] rounded-md hover:bg-[oklch(0.75_0.15_195/0.25)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Terminal className="w-4 h-4" />
-              </button>
-            </form>
+            <AiChatPanel
+              dateStr={format(selectedDate, "yyyy-MM-dd")}
+              contextData={aiContext}
+              initialMessages={chatHistory}
+              onMessagesChange={handleMessagesChange}
+            />
           </div>
         </div>
 
@@ -588,13 +595,14 @@ export default function LifeDashboard() {
           </div>
 
           <div className="flex-1 cyber-card rounded-xl p-3 flex flex-col min-h-0">
-            <DetailPanel 
-              date={selectedDate} 
-              period={detailPeriod} 
-              onPeriodChange={setDetailPeriod} 
-              mealData={currentData.meals} 
-              workData={currentData.work} 
-              fitnessData={currentData.fitnessChartData} 
+            <DetailPanel
+              date={selectedDate}
+              period={detailPeriod}
+              onPeriodChange={setDetailPeriod}
+              mealData={currentData.meals}
+              workData={currentData.work}
+              fitnessData={currentData.fitnessChartData}
+              activities={currentData.activities}
             />
           </div>
         </div>
