@@ -1,18 +1,23 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import dynamic from "next/dynamic"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { 
-  Briefcase, Gamepad2, Dumbbell, Utensils, MapPin, Monitor, Clock, Focus, 
-  TrendingDown, TrendingUp, Scale, AlertTriangle, CheckCircle, Flame, Footprints 
+import {
+  Briefcase, Gamepad2, Dumbbell, Utensils, MapPin, Monitor, Clock, Focus,
+  TrendingDown, TrendingUp, Scale, AlertTriangle, CheckCircle, Flame, Footprints
 } from "lucide-react"
-import { 
-  PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, 
-  YAxis, Tooltip, ComposedChart, Bar, Area, CartesianGrid 
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis,
+  YAxis, Tooltip, ComposedChart, Bar, Area, CartesianGrid
 } from "recharts"
 import { PeriodSelector, type Period } from "./period-selector"
+import type { StayPoint, TransitRoute } from "./location-map"
+
+// Dynamic import to avoid SSR issues with Leaflet
+const LocationMap = dynamic(() => import("./location-map"), { ssr: false })
 
 // --- 1. 型定義 ---
 export interface WorkApp {
@@ -62,44 +67,72 @@ export interface MealDetails {
   }[];
 }
 
+export interface LocationData {
+  stays: StayPoint[]
+  transits: TransitRoute[]
+}
+
+export interface EntertainmentItem {
+  name: string
+  cat_main: string
+  minutes: number
+}
+
+export interface EntertainmentData {
+  date: string
+  breakdown: EntertainmentItem[]
+}
+
 interface DetailPanelProps {
   date: Date
   period: Period
   onPeriodChange: (period: Period) => void
+  activeTab: string
+  onTabChange: (tab: string) => void
   mealData?: MealDetails | null
   workData?: WorkDetails | null
   fitnessData?: FitnessDay[] | null
+  locationData?: LocationData | null
+  entertainmentData?: EntertainmentData | null
 }
 
-// --- 2. 静的データ ---
-const mediaUsageData = [
-  { name: "YouTube", value: 65, color: "oklch(0.65 0.22 25)" },
-  { name: "Netflix", value: 20, color: "oklch(0.6 0.18 280)" },
-  { name: "Spotify", value: 10, color: "oklch(0.7 0.2 145)" },
-  { name: "Game", value: 5, color: "oklch(0.6 0.18 250)" },
+// --- 2. エンタメパネル用定数 ---
+const CAT_COLORS: Record<string, string> = {
+  MEDIA:  "oklch(0.65 0.22 25)",
+  MANGA:  "oklch(0.65 0.18 340)",
+  GAME:   "oklch(0.62 0.22 290)",
+  SOCIAL: "oklch(0.60 0.15 210)",
+}
+
+const CAT_LABELS: Record<string, string> = {
+  MEDIA: "Video", MANGA: "Manga", GAME: "Game", SOCIAL: "Social",
+}
+
+const WASTE_LEVELS = [
+  { max: 0,        label: "NO DATA",    color: "oklch(0.5 0.05 250)",  sub: "No activity recorded" },
+  { max: 60,       label: "FOCUSED",    color: "oklch(0.70 0.20 145)", sub: "Productive day" },
+  { max: 120,      label: "CASUAL",     color: "oklch(0.82 0.17 80)",  sub: "Light indulgence" },
+  { max: 180,      label: "DISTRACTED", color: "oklch(0.75 0.20 40)",  sub: "High distraction" },
+  { max: Infinity, label: "LOST",       color: "oklch(0.65 0.22 20)",  sub: "Productivity impacted" },
 ]
 
-const youtubeGenres = [
-  { genre: "Tech", percent: 45 },
-  { genre: "Music", percent: 25 },
-  { genre: "News", percent: 15 },
-  { genre: "Other", percent: 15 },
-]
+function getWasteLevel(totalMin: number) {
+  for (const lvl of WASTE_LEVELS) {
+    if (totalMin <= lvl.max) return lvl
+  }
+  return WASTE_LEVELS[WASTE_LEVELS.length - 1]
+}
 
-const locationLog = [
-  { time: "07:00", location: "自宅", duration: "2h", coords: "35.6812, 139.7671" },
-  { time: "09:00", location: "オフィス", duration: "8h", coords: "35.6586, 139.7454" },
-  { time: "17:00", location: "カフェ", duration: "1h", coords: "35.6595, 139.7005" },
-  { time: "18:00", location: "ジム", duration: "1h", coords: "35.6614, 139.7043" },
-  { time: "19:30", location: "自宅", duration: "-", coords: "35.6812, 139.7671" },
-]
+function fmtMin(min: number) {
+  if (min < 60) return `${min}m`
+  const h = Math.floor(min / 60), m = min % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
 
 // --- 3. メインコンポーネント ---
-export function DetailPanel({ date, period, onPeriodChange, mealData, workData, fitnessData }: DetailPanelProps) {
-  const [activeTab, setActiveTab] = useState("work")
-
+export function DetailPanel({ date, period, onPeriodChange, activeTab, onTabChange, mealData, workData, fitnessData, locationData, entertainmentData }: DetailPanelProps) {
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+    <Tabs value={activeTab} onValueChange={onTabChange} className="h-full flex flex-col">
       <div className="flex items-center justify-between shrink-0 mb-2">
         <TabsList className="grid grid-cols-5 bg-[oklch(0.12_0.015_250)] p-0.5 h-9 rounded-lg">
           <TabsTrigger value="work" className="text-xs gap-1.5 data-[state=active]:bg-[oklch(0.85_0.18_90/0.2)] h-8 rounded-md font-medium">
@@ -123,10 +156,10 @@ export function DetailPanel({ date, period, onPeriodChange, mealData, workData, 
 
       <div className="flex-1 overflow-auto min-h-0">
         <TabsContent value="work" className="mt-0 h-full"><WorkPanel data={workData} /></TabsContent>
-        <TabsContent value="media" className="mt-0 h-full"><MediaPanel period={period} /></TabsContent>
+        <TabsContent value="media" className="mt-0 h-full"><MediaPanel data={entertainmentData} /></TabsContent>
         <TabsContent value="fitness" className="mt-0 h-full"><FitnessPanel data={fitnessData} date={date} /></TabsContent>
         <TabsContent value="meals" className="mt-0 h-full"><MealsPanel period={period} data={mealData} /></TabsContent>
-        <TabsContent value="location" className="mt-0 h-full"><LocationPanel period={period} /></TabsContent>
+        <TabsContent value="location" className="mt-0 h-full"><LocationPanel data={locationData} /></TabsContent>
       </div>
     </Tabs>
   )
@@ -389,28 +422,129 @@ function FitnessPanel({ data }: { data?: FitnessDay[] | null }) {
 }
 
 // --- 6. MediaPanel ---
-function MediaPanel({ period }: { period: Period }) {
+function MediaPanel({ data }: { data?: EntertainmentData | null }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  const isLoading = data == null
+  const breakdown = data?.breakdown ?? []
+  const totalMin = breakdown.reduce((s, i) => s + i.minutes, 0)
+  const lvl = getWasteLevel(isLoading ? -1 : totalMin)
+  const limitMin = 180
+  const progressPct = isLoading ? 0 : Math.min(100, (totalMin / limitMin) * 100)
+
+  const byMain: Record<string, number> = {}
+  for (const item of breakdown) {
+    byMain[item.cat_main] = (byMain[item.cat_main] ?? 0) + item.minutes
+  }
+  const maxCatMin = Math.max(...Object.values(byMain), 1)
+
+  const grouped = Object.entries(
+    breakdown.reduce<Record<string, EntertainmentItem[]>>((acc, item) => {
+      if (!acc[item.cat_main]) acc[item.cat_main] = []
+      acc[item.cat_main].push(item)
+      return acc
+    }, {})
+  )
+    .map(([cat, items]) => ({ cat, items, catMin: items.reduce((s, i) => s + i.minutes, 0) }))
+    .sort((a, b) => b.catMin - a.catMin)
+
+  const fmtSubName = (name: string) =>
+    name.charAt(0).toUpperCase() + name.slice(1).toLowerCase().replace(/_/g, ' ')
+
   return (
-    <div className="grid grid-cols-3 gap-4 h-full">
-      <div className="space-y-2">
-        <h4 className="text-xs font-semibold text-[oklch(0.7_0.18_340)] uppercase">Media Usage</h4>
-        <div className="bg-[oklch(0.12_0.015_250)] rounded-lg p-3 border border-[oklch(0.7_0.18_340/0.2)]">
-          <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Total Time</div>
-          <div className="text-2xl font-bold font-mono text-[oklch(0.7_0.18_340)]">2h 45m</div>
-          <div className="text-[10px] text-[oklch(0.7_0.2_145)] mt-1 flex items-center gap-1"><TrendingDown className="w-3 h-3" /> -15m vs target</div>
+    <div className="grid grid-cols-12 gap-4 h-full min-h-0">
+      {/* Left: status + category summary */}
+      <div className="col-span-4 flex flex-col gap-3 min-h-0">
+        <div
+          className="rounded-2xl border p-4 relative overflow-hidden shrink-0"
+          style={{
+            background: `linear-gradient(135deg, oklch(0.14 0.02 250), oklch(0.08 0.01 250))`,
+            borderColor: `${lvl.color}30`,
+          }}
+        >
+          <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full blur-3xl opacity-15 pointer-events-none" style={{ backgroundColor: lvl.color }} />
+          <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-2">Leisure Time</div>
+          <div className="flex items-end justify-between mb-3">
+            <span className="text-4xl font-black font-mono tracking-tighter leading-none"
+              style={{ color: lvl.color, filter: `drop-shadow(0 0 10px ${lvl.color}60)` }}>
+              {isLoading ? "--" : totalMin === 0 ? "0m" : fmtMin(totalMin)}
+            </span>
+            <span className="text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border mb-1"
+              style={{ color: lvl.color, borderColor: `${lvl.color}40`, backgroundColor: `${lvl.color}15` }}>
+              {lvl.label}
+            </span>
+          </div>
+          <div className="h-1.5 bg-[oklch(0.08_0.01_250)] rounded-full overflow-hidden border border-white/5">
+            <div className="h-full rounded-full transition-all duration-1000 ease-out"
+              style={{ width: mounted ? `${progressPct}%` : '0%', backgroundColor: lvl.color, boxShadow: `0 0 8px ${lvl.color}80` }} />
+          </div>
+          <div className="text-[9px] text-muted-foreground mt-1.5">{lvl.sub}</div>
         </div>
-        <div className="space-y-1.5 pt-2">
-          {youtubeGenres.map((genre) => (
-            <div key={genre.genre} className="flex items-center gap-2">
-              <span className="text-[10px] opacity-70 w-10 truncate">{genre.genre}</span>
-              <div className="flex-1 h-2 bg-[oklch(0.18_0.02_250)] rounded-full overflow-hidden"><div className="h-full bg-[oklch(0.65_0.22_25)] shadow-[0_0_6px_currentColor]" style={{ width: `${genre.percent}%` }} /></div>
-              <span className="text-[10px] font-mono opacity-50 w-7 text-right">{genre.percent}%</span>
+
+        <div className="bg-[oklch(0.12_0.015_250)] rounded-2xl p-3.5 border border-white/5 flex-1 flex flex-col min-h-0">
+          <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest mb-3 shrink-0">By Category</div>
+          <div className="space-y-3">
+            {(["MEDIA", "MANGA", "GAME", "SOCIAL"] as const).map(cat => {
+              const min = byMain[cat] ?? 0
+              const pct = (min / maxCatMin) * 100
+              const color = CAT_COLORS[cat]
+              return (
+                <div key={cat}>
+                  <div className="flex items-center justify-between text-[10px] mb-1">
+                    <span className="font-semibold" style={{ color }}>{CAT_LABELS[cat]}</span>
+                    <span className="font-mono text-muted-foreground">{min > 0 ? fmtMin(min) : "–"}</span>
+                  </div>
+                  <div className="h-1 bg-[oklch(0.08_0.01_250)] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-700 ease-out"
+                      style={{ width: mounted ? `${pct}%` : '0%', backgroundColor: color, boxShadow: `0 0 6px ${color}60` }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Right: hierarchical breakdown */}
+      <div className="col-span-8 bg-[oklch(0.12_0.015_250)] rounded-2xl border border-white/5 flex flex-col min-h-0 h-full p-4">
+        <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 shrink-0">Activity Breakdown</div>
+
+        {!isLoading && grouped.length === 0 && (
+          <div className="flex-1 flex items-center justify-center">
+            <span className="text-sm text-muted-foreground italic">No entertainment today</span>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto space-y-5 pr-1 min-h-0">
+          {grouped.map(({ cat, items, catMin }) => (
+            <div key={cat}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: CAT_COLORS[cat] }} />
+                  <span className="text-xs font-bold" style={{ color: CAT_COLORS[cat] }}>{CAT_LABELS[cat]}</span>
+                </div>
+                <span className="text-xs font-mono text-muted-foreground">{fmtMin(catMin)}</span>
+              </div>
+              <div className="space-y-2 ml-4">
+                {items.map(item => {
+                  const pct = totalMin > 0 ? (item.minutes / totalMin) * 100 : 0
+                  return (
+                    <div key={item.name} className="flex items-center gap-3">
+                      <span className="text-[10px] text-foreground/70 w-28 truncate shrink-0">{fmtSubName(item.name)}</span>
+                      <div className="flex-1 h-1.5 bg-[oklch(0.08_0.01_250)] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-700 ease-out"
+                          style={{ width: mounted ? `${pct}%` : '0%', backgroundColor: CAT_COLORS[cat], opacity: 0.75 }} />
+                      </div>
+                      <span className="text-[10px] font-mono text-muted-foreground w-10 text-right shrink-0">{fmtMin(item.minutes)}</span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           ))}
         </div>
       </div>
-      <div className="h-40 flex items-center justify-center"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={mediaUsageData} cx="50%" cy="50%" innerRadius={35} outerRadius={65} dataKey="value" strokeWidth={0}>{mediaUsageData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}</Pie><Tooltip contentStyle={{ backgroundColor: 'oklch(0.12 0.015 250)', border: 'none', borderRadius: '8px', fontSize: '11px' }} /></PieChart></ResponsiveContainer></div>
-      <div className="space-y-1.5">{mediaUsageData.map((item) => (<div key={item.name} className="flex items-center gap-2 bg-white/5 rounded-lg p-2.5 border border-white/5"><div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: item.color, boxShadow: `0 0 6px ${item.color}` }} /><span className="flex-1 text-xs opacity-80">{item.name}</span><span className="text-lg font-mono font-bold opacity-80">{item.value}%</span></div>))}</div>
     </div>
   )
 }
@@ -493,20 +627,86 @@ function MealsPanel({ period, data }: { period: Period, data: MealDetails | null
 }
 
 // --- 8. LocationPanel ---
-function LocationPanel({ period }: { period: Period }) {
+function LocationPanel({ data }: { data?: LocationData | null }) {
+  const stays = data?.stays ?? []
+  const transits = data?.transits ?? []
+  const loading = data === null || data === undefined
+
+  const formatTime = (isoStr: string | null | undefined) => {
+    if (!isoStr) return "--"
+    try {
+      return new Date(isoStr.replace(" ", "T")).toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Tokyo",
+      })
+    } catch {
+      return "--"
+    }
+  }
+
+  const formatDuration = (min: number) => {
+    if (min < 60) return `${min}m`
+    const h = Math.floor(min / 60)
+    const m = min % 60
+    return m > 0 ? `${h}h ${m}m` : `${h}h`
+  }
+
   return (
-    <div className="grid grid-cols-2 gap-4 h-full">
-      <div className="bg-[oklch(0.1_0.015_250)] rounded-xl border border-[oklch(0.6_0.18_250/0.2)] overflow-hidden relative">
-        <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><MapPin className="w-10 h-10 text-[oklch(0.6_0.18_250/0.5)]" /><span className="text-xs text-muted-foreground uppercase">OwnTracks Map</span></div>
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: `linear-gradient(oklch(0.6 0.18 250 / 0.3) 1px, transparent 1px), linear-gradient(90deg, oklch(0.6 0.18 250 / 0.3) 1px, transparent 1px)`, backgroundSize: '20px 20px' }} />
+    <div className="grid grid-cols-5 gap-4 h-full">
+      {/* Left: Map (60% = 3/5 cols) */}
+      <div className="col-span-3 bg-[oklch(0.1_0.015_250)] rounded-xl border border-[oklch(0.6_0.18_250/0.2)] overflow-hidden relative">
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center flex-col gap-2 bg-[oklch(0.1_0.015_250/0.8)]">
+            <MapPin className="w-8 h-8 text-[oklch(0.6_0.18_250/0.5)] animate-pulse" />
+            <span className="text-xs text-muted-foreground uppercase tracking-wide">Loading map...</span>
+          </div>
+        )}
+        {!loading && (
+          <LocationMap stays={stays} transits={transits} />
+        )}
       </div>
-      <div className="space-y-2">
-        <h4 className="text-xs font-semibold text-[oklch(0.6_0.18_250)] uppercase">Location History</h4>
-        <div className="space-y-1.5 overflow-y-auto pr-1 h-full">
-          {locationLog.map((log, index) => (
-            <div key={index} className="flex items-start gap-2 bg-[oklch(0.1_0.015_250)] rounded-lg p-2.5 border border-[oklch(0.25_0.03_250/0.3)]">
-              <div className="flex flex-col items-center"><div className="w-2.5 h-2.5 rounded-full bg-[oklch(0.6_0.18_250)] shadow-[0_0_6px_currentColor]" />{index < locationLog.length - 1 && <div className="w-px h-6 bg-[oklch(0.6_0.18_250/0.3)] mt-1" />}</div>
-              <div className="flex-1 min-w-0"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-foreground truncate">{log.location}</span><span className="text-[10px] font-mono text-muted-foreground shrink-0">{log.duration}</span></div><div className="text-[10px] font-mono text-[oklch(0.6_0.18_250)] mt-0.5">{log.time} <span className="text-[9px] text-muted-foreground/60">{log.coords}</span></div></div>
+
+      {/* Right: Stay list (40% = 2/5 cols) */}
+      <div className="col-span-2 flex flex-col gap-2 min-h-0">
+        <div className="flex items-center justify-between shrink-0">
+          <h4 className="text-xs font-semibold text-[oklch(0.6_0.18_250)] uppercase tracking-wider">
+            Location History
+          </h4>
+          <span className="text-[10px] font-mono text-muted-foreground">
+            {stays.length} stops
+          </span>
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 min-h-0">
+          {stays.length === 0 && !loading && (
+            <div className="text-xs text-muted-foreground text-center py-8 uppercase tracking-wide">
+              No stays recorded
+            </div>
+          )}
+          {stays.map((stay, index) => (
+            <div
+              key={stay.stayPk}
+              className="flex items-start gap-2 bg-[oklch(0.1_0.015_250)] rounded-lg p-2.5 border border-[oklch(0.25_0.03_250/0.3)]"
+            >
+              <div className="flex flex-col items-center shrink-0 pt-0.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-[oklch(0.6_0.18_250)] shadow-[0_0_6px_oklch(0.6_0.18_250)]" />
+                {index < stays.length - 1 && (
+                  <div className="w-px h-5 bg-[oklch(0.6_0.18_250/0.3)] mt-1" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-1">
+                  <span className="text-xs font-semibold text-foreground truncate leading-tight">
+                    {stay.placeName}
+                  </span>
+                  <span className="text-[10px] font-mono text-[oklch(0.6_0.18_250)] shrink-0">
+                    {formatDuration(stay.durationMin)}
+                  </span>
+                </div>
+                <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                  {formatTime(stay.arrivedAt)} – {formatTime(stay.departedAt)}
+                </div>
+              </div>
             </div>
           ))}
         </div>

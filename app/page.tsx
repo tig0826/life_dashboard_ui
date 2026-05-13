@@ -10,15 +10,45 @@ import { KpiBoard, type KpiItem, type KpiStatus } from "@/components/dashboard/k
 import { ActivityTimeline } from "@/components/dashboard/activity-timeline"
 import { AiFeedback } from "@/components/dashboard/ai-feedback"
 import { AiChatPanel } from "@/components/dashboard/ai-chat-panel"
-import { DetailPanel } from "@/components/dashboard/detail-panel"
+import { DetailPanel, type LocationData, type EntertainmentData } from "@/components/dashboard/detail-panel"
 import { DatePicker } from "@/components/dashboard/date-picker"
 import { PeriodSelector, type Period } from "@/components/dashboard/period-selector"
+
+// --- localStorage キャッシュユーティリティ ---
+const CACHE_V = 2
+
+const ck = (type: string, id: string) => `ldb_v${CACHE_V}_${type}_${id}`
+
+function saveCache(key: string, data: unknown) {
+  try { localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() })) } catch {}
+}
+
+function loadCache<T>(key: string): { data: T; ts: number } | null {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+function isCacheStale(ts: number, dateStr: string): boolean {
+  const today = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const yesterdayStr = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`
+  const maxAge = dateStr >= todayStr ? 15 * 60_000
+    : dateStr >= yesterdayStr ? 2 * 60 * 60_000
+    : 6 * 60 * 60_000
+  return Date.now() - ts > maxAge
+}
 
 // - 型定義 -
 type DailyPayload = {
   activities: any[]
   meals: any | null
   work: any | null
+  feedback: AiFeedbackBySlot
 }
 
 type AiFeedbackSlot = "morning" | "noon" | "night"
@@ -102,7 +132,7 @@ export default function LifeDashboard() {
   // 🚀 1. ステート管理
   const [dailyCache, setDailyCache] = useState<Record<string, DailyPayload>>({})
   const [fitnessCache, setFitnessCache] = useState<any[]>([])
-  const [feedbackCache, setFeedbackCache] = useState<Record<string, AiFeedbackBySlot>>({})
+  const [locationCache, setLocationCache] = useState<Record<string, LocationData>>({})
   const [selectedFeedbackSlot, setSelectedFeedbackSlot] = useState<AiFeedbackSlot | null>(null)
   const [chatHistory, setChatHistory] = useState<any[]>(() => {
     if (typeof window === "undefined") return []
@@ -114,12 +144,9 @@ export default function LifeDashboard() {
     }
   })
 
-  // 🚀 2. ロック機構
-  const fetchedDaily = useRef<Set<string>>(new Set())
+  // 並列リクエスト重複防止（同一キーの同時fetch防止のみ、再fetchはキャッシュ鮮度で制御）
   const fetchingDaily = useRef<Set<string>>(new Set())
-  const fetchedFitnessDates = useRef<Set<string>>(new Set())
   const fetchingFitness = useRef<Set<string>>(new Set())
-  const fetchedFeedback = useRef<Set<string>>(new Set())
 
   // 🚀 3. UI制御ステート
   const [selectedDate, setSelectedDate] = useState(new Date())
@@ -127,56 +154,70 @@ export default function LifeDashboard() {
   const [summaryPeriod, setSummaryPeriod] = useState<Period>("day")
   const [timelinePeriod, setTimelinePeriod] = useState<Period>("day")
   const [detailPeriod, setDetailPeriod] = useState<Period>("day")
+  const [activeTab, setActiveTab] = useState("work")
   const [mounted, setMounted] = useState(false)
   const [lastUpdate, setLastUpdate] = useState("")
 
   const fetchDailyBulk = useCallback(async (targetDateStr: string, days: number = 14) => {
-    if (fetchedDaily.current.has(targetDateStr)) return
     if (fetchingDaily.current.has(targetDateStr)) return
 
-    fetchingDaily.current.add(targetDateStr)
+    const key = ck('bulk', `${targetDateStr}_${days}`)
+    const cached = loadCache<any[]>(key)
 
+    if (cached?.data) {
+      setDailyCache(prev => {
+        const next = { ...prev }
+        cached.data.forEach((d: any) => {
+          if (d.date) next[d.date] = { activities: d.activities || [], meals: d.meals || null, work: d.work || null, feedback: d.feedback || {} }
+        })
+        return next
+      })
+      if (!isCacheStale(cached.ts, targetDateStr)) return
+    }
+
+    fetchingDaily.current.add(targetDateStr)
     try {
       const res = await fetch(`/api/bulk?endDate=${targetDateStr}&days=${days}`)
       if (!res.ok) throw new Error(`Daily bulk failed: ${res.status}`)
-
       const dataArray = await res.json()
-
+      saveCache(key, dataArray)
       setDailyCache(prev => {
-        const nextCache = { ...prev }
-        dataArray.forEach((dayData: any) => {
-          if (!dayData.date) return
-          nextCache[dayData.date] = {
-            activities: dayData.activities || [],
-            meals: dayData.meals || null,
-            work: dayData.work || null,
-          }
-          fetchedDaily.current.add(dayData.date)
-          fetchingDaily.current.delete(dayData.date)
+        const next = { ...prev }
+        dataArray.forEach((d: any) => {
+          if (d.date) next[d.date] = { activities: d.activities || [], meals: d.meals || null, work: d.work || null, feedback: d.feedback || {} }
         })
-        return nextCache
+        return next
       })
     } catch (e) {
       console.error("Daily bulk fetch error:", e)
+    } finally {
       fetchingDaily.current.delete(targetDateStr)
     }
   }, [])
 
   const fetchFitnessBulk = useCallback(async (endDateStr: string) => {
-    if (fetchedFitnessDates.current.has(endDateStr)) return
     if (fetchingFitness.current.has(endDateStr)) return
 
-    fetchingFitness.current.add(endDateStr)
+    const key = ck('fitness', endDateStr)
+    const cached = loadCache<any[]>(key)
 
+    if (cached?.data) {
+      setFitnessCache(prev => {
+        const byDate = new Map<string, any>()
+        for (const row of prev) byDate.set(row.date, row)
+        for (const row of cached.data) byDate.set(row.date, row)
+        return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+      })
+      if (!isCacheStale(cached.ts, endDateStr)) return
+    }
+
+    fetchingFitness.current.add(endDateStr)
     try {
       const res = await fetch(`/api/fitness?date=${endDateStr}&days=90`)
       if (!res.ok) throw new Error(`Fitness bulk failed: ${res.status}`)
-
       const data = await res.json()
       const arr = Array.isArray(data) ? data : [data]
-
-      arr.forEach(d => fetchedFitnessDates.current.add(d.date))
-
+      saveCache(key, arr)
       setFitnessCache(prev => {
         const byDate = new Map<string, any>()
         for (const row of prev) byDate.set(row.date, row)
@@ -190,27 +231,41 @@ export default function LifeDashboard() {
     }
   }, [])
 
-  const fetchFeedback = useCallback(async (dateStr: string) => {
-    if (fetchedFeedback.current.has(dateStr)) return
+  const chatSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    fetchedFeedback.current.add(dateStr)
+  const fetchLocation = useCallback(async (dateStr: string) => {
+    const key = ck('location', dateStr)
+    const cached = loadCache<LocationData>(key)
+
+    if (cached?.data) {
+      setLocationCache(prev => ({ ...prev, [dateStr]: cached.data }))
+      if (!isCacheStale(cached.ts, dateStr)) return
+    }
+
     try {
-      const res = await fetch(`/api/feedback?date=${dateStr}`)
-      if (!res.ok) return
+      const res = await fetch(`/api/location?date=${dateStr}`)
+      if (!res.ok) throw new Error(`Location fetch failed: ${res.status}`)
       const data = await res.json()
-      setFeedbackCache(prev => ({ ...prev, [dateStr]: data }))
-      const latest = (["night", "noon", "morning"] as const).find(s => data[s])
-      if (latest) setSelectedFeedbackSlot(latest)
+      const locationData = { stays: data.stays || [], transits: data.transits || [] }
+      saveCache(key, locationData)
+      setLocationCache(prev => ({ ...prev, [dateStr]: locationData }))
     } catch (e) {
-      console.error(`Feedback fetch error for ${dateStr}:`, e)
+      console.error(`Location fetch error for ${dateStr}:`, e)
     }
   }, [])
 
   const handleMessagesChange = useCallback((messages: any[]) => {
     setChatHistory(messages)
-    try {
-      localStorage.setItem("chat-messages", JSON.stringify(messages.slice(-100)))
-    } catch {}
+    try { localStorage.setItem("chat-messages", JSON.stringify(messages.slice(-100))) } catch {}
+    // デバウンスしてTrinoに保存（3秒後、最後のメッセージから）
+    if (chatSaveTimer.current) clearTimeout(chatSaveTimer.current)
+    chatSaveTimer.current = setTimeout(() => {
+      fetch("/api/chat-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: messages.slice(-100) }),
+      }).catch(console.error)
+    }, 3000)
   }, [])
 
   useEffect(() => {
@@ -219,29 +274,28 @@ export default function LifeDashboard() {
     const loadData = async () => {
       const dStr = format(selectedDate, "yyyy-MM-dd")
 
-      setIsLoading(true)
+      // キャッシュがなければローディング表示、あれば即座に表示してバックグラウンド更新
+      const hasBulkCache = !!loadCache(ck('bulk', `${dStr}_14`))
+      const hasFitnessCache = !!loadCache(ck('fitness', dStr))
+      if (!hasBulkCache || !hasFitnessCache) setIsLoading(true)
+
       await Promise.all([
         fetchDailyBulk(dStr, 14),
         fetchFitnessBulk(dStr),
-        fetchFeedback(dStr),
+        fetchLocation(dStr),
       ])
       setIsLoading(false)
-
-      setTimeout(() => {
-        const pastDateStr = format(subDays(selectedDate, 14), "yyyy-MM-dd")
-        fetchDailyBulk(pastDateStr, 14)
-      }, 3000)
     }
 
     loadData()
-  }, [selectedDate, mounted, fetchDailyBulk, fetchFitnessBulk, fetchFeedback])
+  }, [selectedDate, mounted, fetchDailyBulk, fetchFitnessBulk, fetchLocation])
 
   useEffect(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
-    const fb = feedbackCache[dStr]
+    const fb = dailyCache[dStr]?.feedback
     const latest = fb && (["night", "noon", "morning"] as const).find(s => fb[s])
     setSelectedFeedbackSlot(latest ?? null)
-  }, [selectedDate, feedbackCache])
+  }, [selectedDate, dailyCache])
 
   const currentData = useMemo(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
@@ -252,16 +306,32 @@ export default function LifeDashboard() {
     const chartData = fitnessCache
       .filter(d => d.date >= pastStr && d.date <= dStr)
       .sort((a, b) => a.date.localeCompare(b.date))
+    const location = locationCache[dStr] ?? null
 
-    return { ...daily, fitness, fitnessChartData: chartData }
-  }, [selectedDate, dailyCache, fitnessCache])
+    const ENT_CATS = new Set(['MEDIA', 'MANGA', 'GAME', 'SOCIAL'])
+    const subMap: Record<string, { cat_main: string; sec: number }> = {}
+    for (const act of daily.activities) {
+      if (!ENT_CATS.has(act.cat_main)) continue
+      if (!subMap[act.cat_sub]) subMap[act.cat_sub] = { cat_main: act.cat_main, sec: 0 }
+      subMap[act.cat_sub].sec += (act.overlapSec || 0)
+    }
+    const entertainment: EntertainmentData = {
+      date: dStr,
+      breakdown: Object.entries(subMap)
+        .map(([name, { cat_main, sec }]) => ({ name, cat_main, minutes: Math.round(sec / 60) }))
+        .filter(item => item.minutes > 0)
+        .sort((a, b) => b.minutes - a.minutes),
+    }
+
+    return { ...daily, fitness, fitnessChartData: chartData, location, entertainment }
+  }, [selectedDate, dailyCache, fitnessCache, locationCache])
 
   const aiContext = useMemo(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
     const base = buildAiContext(currentData, fitnessCache, dStr)
 
     // 今日のAI FBメッセージを含める
-    const fb = feedbackCache[dStr]
+    const fb = dailyCache[dStr]?.feedback
     const aiFeedbackToday = fb
       ? (["morning", "noon", "night"] as const)
           .filter(s => fb[s])
@@ -275,7 +345,7 @@ export default function LifeDashboard() {
     }))
 
     return { ...base, ai_feedback_today: aiFeedbackToday, recent_chat: recentChat }
-  }, [selectedDate, currentData, fitnessCache, feedbackCache, chatHistory])
+  }, [selectedDate, currentData, fitnessCache, dailyCache, chatHistory])
 
 
 
@@ -305,7 +375,7 @@ export default function LifeDashboard() {
     const entByCat: Record<string, number> = {}
     for (const act of currentData.activities) {
       if (!(act.cat_main in ENT_KPI_CATS)) continue
-      entByCat[act.cat_main] = (entByCat[act.cat_main] ?? 0) + (act.endHour - act.startHour) * 60
+      entByCat[act.cat_main] = (entByCat[act.cat_main] ?? 0) + (act.overlapSec || 0) / 60
     }
     const totalMediaMins = Math.round(Object.values(entByCat).reduce((a, b) => a + b, 0))
     const mediaProgress = Math.max(0, 100 - (totalMediaMins / 240) * 100)
@@ -454,31 +524,32 @@ export default function LifeDashboard() {
   useEffect(() => {
     setMounted(true)
     const timer = setInterval(() => setLastUpdate(new Date().toLocaleTimeString('ja-JP')), 1000)
+    // Trinoからチャット履歴をロード（クロスブラウザ対応）
+    fetch("/api/chat-history")
+      .then(r => r.json())
+      .then(({ messages }) => {
+        if (messages?.length > 0) {
+          setChatHistory(messages)
+          try { localStorage.setItem("chat-messages", JSON.stringify(messages.slice(-100))) } catch {}
+        }
+      })
+      .catch(console.error)
     return () => clearInterval(timer)
   }, [])
 
   useEffect(() => {
     if (!mounted) return
 
-    const REFRESH_INTERVAL_MS = 1000 * 60 * 15 
-
+    // 15分ごとにバックグラウンド更新（選択日付に関わらず実行、鮮度チェックはfetch内部で行う）
     const timer = setInterval(() => {
-      const todayStr = format(new Date(), "yyyy-MM-dd")
-      const currentSelectedStr = format(selectedDate, "yyyy-MM-dd")
-
-      if (currentSelectedStr === todayStr) {
-        console.log(`[Auto Refresh] Fetching latest data for ${todayStr}...`)
-        
-        fetchedDaily.current.delete(todayStr)
-        fetchedFitnessDates.current.delete(todayStr)
-
-        fetchDailyBulk(todayStr, 1)
-        fetchFitnessBulk(todayStr) 
-      }
-    }, REFRESH_INTERVAL_MS)
+      const dStr = format(selectedDate, "yyyy-MM-dd")
+      fetchDailyBulk(dStr, 14)
+      fetchFitnessBulk(dStr)
+      fetchLocation(dStr)
+    }, 15 * 60_000)
 
     return () => clearInterval(timer)
-  }, [mounted, selectedDate, fetchDailyBulk, fetchFitnessBulk])
+  }, [mounted, selectedDate, fetchDailyBulk, fetchFitnessBulk, fetchLocation])
 
   if (!mounted) return <div className="h-screen w-screen bg-background" />
 
@@ -517,7 +588,7 @@ export default function LifeDashboard() {
           <div className="cyber-card-green rounded-xl p-3 shrink-0" style={{ maxHeight: '32%' }}>
             {(() => {
               const dStr = format(selectedDate, "yyyy-MM-dd")
-              const fb = feedbackCache[dStr]
+              const fb = dailyCache[dStr]?.feedback
               const slotLabels: { key: AiFeedbackSlot; label: string }[] = [
                 { key: "morning", label: "朝" },
                 { key: "noon",    label: "昼" },
@@ -599,10 +670,13 @@ export default function LifeDashboard() {
               date={selectedDate}
               period={detailPeriod}
               onPeriodChange={setDetailPeriod}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
               mealData={currentData.meals}
               workData={currentData.work}
               fitnessData={currentData.fitnessChartData}
-              activities={currentData.activities}
+              locationData={currentData.location}
+              entertainmentData={currentData.entertainment}
             />
           </div>
         </div>

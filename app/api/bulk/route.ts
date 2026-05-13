@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
         activities: [],
         meals: null,
         work: null,
+        feedback: {},
       });
     });
 
@@ -96,14 +97,27 @@ export async function GET(request: NextRequest) {
         WHERE slot_date_jst BETWEEN DATE '${startDateStr}' AND DATE '${endDateStr}'
         ORDER BY time_slot_jst ASC
       `,
+      feedback: `
+        SELECT
+          CAST(feedback_date AS VARCHAR) as dt,
+          slot,
+          CAST(generated_at AS VARCHAR) as generated_at,
+          messages,
+          model
+        FROM life_gold.ai_feedback
+        WHERE feedback_date BETWEEN DATE '${startDateStr}' AND DATE '${endDateStr}'
+        ORDER BY feedback_date,
+          CASE slot WHEN 'morning' THEN 1 WHEN 'noon' THEN 2 WHEN 'night' THEN 3 ELSE 4 END
+      `,
     };
 
     // 🚀 クエリの並列実行
-    const [workResult, mealsResult, activitiesResult] =
+    const [workResult, mealsResult, activitiesResult, feedbackResult] =
       await Promise.allSettled([
         runTrinoQuery(trino, queries.work),
         runTrinoQuery(trino, queries.meals),
         runTrinoQuery(trino, queries.activities),
+        runTrinoQuery(trino, queries.feedback),
       ]);
 
     // ==========================================
@@ -302,11 +316,30 @@ export async function GET(request: NextRequest) {
             endHour,
             cat_main: row[3],
             cat_sub: row[4],
+            overlapSec: Number(row[5] || 0),
           });
         }
       });
     } else {
       console.error("Activities bulk query failed:", activitiesResult.reason);
+    }
+
+    // ✅ Feedback データのマージ
+    if (feedbackResult.status === "fulfilled") {
+      feedbackResult.value.forEach((row: any[]) => {
+        const dStr = String(row[0]).split("T")[0].split(" ")[0];
+        if (!responseMap.has(dStr)) return;
+        const [, slot, generatedAt, messagesJson, model] = row;
+        try {
+          responseMap.get(dStr).feedback[String(slot)] = {
+            generatedAt: String(generatedAt),
+            messages: JSON.parse(String(messagesJson)),
+            model: String(model),
+          };
+        } catch {}
+      });
+    } else {
+      console.error("Feedback bulk query failed:", feedbackResult.reason);
     }
 
     // 🚀 辞書を配列に変換してソート

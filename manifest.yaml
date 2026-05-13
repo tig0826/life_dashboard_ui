@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: life
+
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: life-dashboard-es
+  namespace: life
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-secret-store
+    kind: ClusterSecretStore
+  target:
+    name: life-dashboard-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: GOOGLE_GENERATIVE_AI_API_KEY
+      remoteRef:
+        key: life-dashboard
+        property: GOOGLE_GENERATIVE_AI_API_KEY
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: life-dashboard
+  namespace: life
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: life-dashboard
+  template:
+    metadata:
+      labels:
+        app: life-dashboard
+    spec:
+      containers:
+      - name: app
+        image: tig0826/life-dashboard-ui:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        env:
+        - name: TRINO_SERVER_URL
+          value: http://trino.mynet
+        - name: TRINO_CATALOG
+          value: iceberg
+        - name: TRINO_SCHEMA
+          value: life_gold
+        - name: NEXT_PUBLIC_APP_URL
+          value: http://life.mynet
+        - name: GOOGLE_GENERATIVE_AI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: life-dashboard-secret
+              key: GOOGLE_GENERATIVE_AI_API_KEY
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: life-dashboard
+  namespace: life
+spec:
+  selector:
+    app: life-dashboard
+  ports:
+  - protocol: TCP
+    port: 3000
+    targetPort: 3000
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: life-dashboard-ingress
+  namespace: life
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: life.mynet
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: life-dashboard
+            port:
+              number: 3000
