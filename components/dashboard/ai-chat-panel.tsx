@@ -16,20 +16,19 @@ export function AiChatPanel({ dateStr, contextData, initialMessages, onMessagesC
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevStatusRef = useRef<string>("ready")
-  const initializedRef = useRef(false)
+  const locallyActiveRef = useRef(false)  // このセッションでメッセージを送ったか
 
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
     messages: initialMessages,
   })
 
-  // initialMessagesが外部から更新されたとき（リマウント時）のみ同期
+  // ローカルで未送信の間はinitialMessages(Trino/localStorage)を常に反映
   useEffect(() => {
-    if (!initializedRef.current) {
-      initializedRef.current = true
-      return
+    if (!locallyActiveRef.current && initialMessages.length > 0) {
+      setMessages(initialMessages)
     }
-  }, [])
+  }, [initialMessages, setMessages])
 
   const isLoading = status === "submitted" || status === "streaming"
 
@@ -109,6 +108,7 @@ export function AiChatPanel({ dateStr, contextData, initialMessages, onMessagesC
           e.preventDefault()
           const text = input.trim()
           if (!text || isLoading || status !== "ready") return
+          locallyActiveRef.current = true
           sendMessage(
             { role: "user", parts: [{ type: "text", text }] },
             { body: { contextData } }
