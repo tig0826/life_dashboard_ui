@@ -49,7 +49,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className="dark" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased overflow-hidden`}>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased md:overflow-hidden`}>
         {children}
         <Analytics />
       </body>

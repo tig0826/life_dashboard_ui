@@ -83,22 +83,75 @@ type AiContext = {
 
 
 function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) {
-  const today = currentData.fitness
-
+  const fitness = currentData.fitness
   const round1 = (v: number | null | undefined) =>
     v != null ? Math.round(v * 10) / 10 : null
 
-  // 今日
+  // ── 活動タイムライン集計（時間帯別・カテゴリ別）──────────────────
+  const activityByPeriod: Record<string, Record<string, number>> = {
+    morning: {}, afternoon: {}, evening: {}, night: {}
+  }
+  const activityTotal: Record<string, number> = {}
+  for (const act of currentData.activities ?? []) {
+    if (!act.cat_main || act.cat_main === "UNKNOWN" || act.cat_main === "UNOBSERVED") continue
+    const h = act.startHour
+    const period = h < 12 ? "morning" : h < 18 ? "afternoon" : h < 22 ? "evening" : "night"
+    const mins = (act.overlapSec || 0) / 60
+    activityByPeriod[period][act.cat_main] = (activityByPeriod[period][act.cat_main] ?? 0) + mins
+    activityTotal[act.cat_main] = (activityTotal[act.cat_main] ?? 0) + mins
+  }
+  const roundMins = (obj: Record<string, number>) =>
+    Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, Math.round(v)]).filter(([, v]) => v > 0))
+
+  // ── 食事詳細 ──────────────────────────────────────────────────────
+  const meals = currentData.meals?.meals
+  const nutrition = currentData.meals?.nutrition
+  const mealsCtx = meals ? {
+    breakfast: meals.breakfast?.items?.length ? `${meals.breakfast.items.join("・")} (${meals.breakfast.calories}kcal)` : null,
+    lunch: meals.lunch?.items?.length ? `${meals.lunch.items.join("・")} (${meals.lunch.calories}kcal)` : null,
+    dinner: meals.dinner?.items?.length ? `${meals.dinner.items.join("・")} (${meals.dinner.calories}kcal)` : null,
+    snack: meals.snack?.items?.length ? `${meals.snack.items.join("・")} (${meals.snack.calories}kcal)` : null,
+    nutrition: nutrition ? Object.fromEntries(
+      nutrition.map((n: any) => [n.name, `${n.current}${n.unit} (target:${n.target})`])
+    ) : null,
+  } : null
+
+  // ── 仕事・開発アプリ内訳 ──────────────────────────────────────────
+  const workApps = currentData.work?.work?.apps?.slice(0, 5).map((a: any) =>
+    `${a.name}(${Math.round(a.value / 60)}min)`) ?? []
+  const devApps = currentData.work?.dev?.apps?.slice(0, 5).map((a: any) =>
+    `${a.name}(${Math.round(a.value / 60)}min)`) ?? []
+
+  // ── 今日のコンテキスト ────────────────────────────────────────────
   const todayCtx = {
-    sleep_hours: today?.sleepMins ? round1(today.sleepMins / 60) : null,
-    steps: today?.steps ?? null,
-    calorie_balance: today?.balance ?? null,
-    resting_hr: today?.restingHr ?? null,
-    work_score: typeof currentData?.work?.work?.score === "number" ? currentData.work.work.score : null,
-    dev_score: typeof currentData?.work?.dev?.score === "number" ? currentData.work.dev.score : null,
+    sleep_hours: fitness?.sleepMins ? round1(fitness.sleepMins / 60) : null,
+    sleep_deep_min: fitness?.deepMins ?? null,
+    sleep_rem_min: fitness?.remMins ?? null,
+    sleep_efficiency_pct: fitness?.timeInBed > 0
+      ? Math.round((fitness.sleepMins / fitness.timeInBed) * 100) : null,
+    steps: fitness?.steps ?? null,
+    calorie_balance: fitness?.balance ?? null,
+    calories_in: fitness?.intake ?? null,
+    resting_hr: fitness?.restingHr ?? null,
+    weight_kg: fitness?.weightKg ?? null,
+    work_score: currentData?.work?.work?.score ?? null,
+    dev_score: currentData?.work?.dev?.score ?? null,
+    work_focus_pct: currentData?.work?.work?.focusRate ?? null,
+    work_hours: currentData?.work?.work?.coreSec ? round1(currentData.work.work.coreSec / 3600) : null,
+    dev_hours: currentData?.work?.dev?.coreSec ? round1(currentData.work.dev.coreSec / 3600) : null,
+    work_apps: workApps.length ? workApps : null,
+    dev_apps: devApps.length ? devApps : null,
+    activity_total_minutes: roundMins(activityTotal),
+    activity_by_period: {
+      morning: roundMins(activityByPeriod.morning),
+      afternoon: roundMins(activityByPeriod.afternoon),
+      evening: roundMins(activityByPeriod.evening),
+      night: roundMins(activityByPeriod.night),
+    },
+    meals: mealsCtx,
   }
 
-  // 過去14日の日別データ（日付降順）
+  // ── 過去14日トレンド ──────────────────────────────────────────────
   const sorted = [...fitnessCache].sort((a, b) => b.date.localeCompare(a.date))
   const past14 = sorted.slice(0, 14).map((d) => ({
     date: d.date,
@@ -108,7 +161,6 @@ function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) 
     resting_hr: d.restingHr ?? null,
   }))
 
-  // 過去7日平均
   const last7 = sorted.slice(0, 7)
   const avg = (vals: (number | null)[]) => {
     const valid = vals.filter((v): v is number => v != null)
@@ -133,6 +185,9 @@ export default function LifeDashboard() {
   const [dailyCache, setDailyCache] = useState<Record<string, DailyPayload>>({})
   const [fitnessCache, setFitnessCache] = useState<any[]>([])
   const [locationCache, setLocationCache] = useState<Record<string, LocationData>>({})
+  // stateの最新値をrefで追跡（useEffect内からdepsなしで参照するため）
+  useEffect(() => { dailyCacheRef.current = dailyCache }, [dailyCache])
+  useEffect(() => { fitnessCacheRef.current = fitnessCache }, [fitnessCache])
   const [selectedFeedbackSlot, setSelectedFeedbackSlot] = useState<AiFeedbackSlot | null>(null)
   const [chatHistory, setChatHistory] = useState<any[]>(() => {
     if (typeof window === "undefined") return []
@@ -147,6 +202,9 @@ export default function LifeDashboard() {
   // 並列リクエスト重複防止（同一キーの同時fetch防止のみ、再fetchはキャッシュ鮮度で制御）
   const fetchingDaily = useRef<Set<string>>(new Set())
   const fetchingFitness = useRef<Set<string>>(new Set())
+  // dailyCacheの最新値をエフェクト内から安全に参照するためのref
+  const dailyCacheRef = useRef(dailyCache)
+  const fitnessCacheRef = useRef(fitnessCache)
 
   // 🚀 3. UI制御ステート
   const [selectedDate, setSelectedDate] = useState(new Date())
@@ -274,17 +332,27 @@ export default function LifeDashboard() {
     const loadData = async () => {
       const dStr = format(selectedDate, "yyyy-MM-dd")
 
-      // キャッシュがなければローディング表示、あれば即座に表示してバックグラウンド更新
+      const hasInMemory = !!dailyCacheRef.current[dStr] &&
+        fitnessCacheRef.current.some((f: any) => f.date === dStr)
       const hasBulkCache = !!loadCache(ck('bulk', `${dStr}_14`))
       const hasFitnessCache = !!loadCache(ck('fitness', dStr))
-      if (!hasBulkCache || !hasFitnessCache) setIsLoading(true)
 
-      await Promise.all([
-        fetchDailyBulk(dStr, 14),
-        fetchFitnessBulk(dStr),
-        fetchLocation(dStr),
-      ])
-      setIsLoading(false)
+      if (hasInMemory || (hasBulkCache && hasFitnessCache)) {
+        // すでにstateかlocalStorageにデータあり → 即座に表示、リフレッシュはバックグラウンドで
+        fetchDailyBulk(dStr, 14)
+        fetchFitnessBulk(dStr)
+        fetchLocation(dStr)
+        setIsLoading(false)
+      } else {
+        // 初回ロード → 待って表示
+        setIsLoading(true)
+        await Promise.all([
+          fetchDailyBulk(dStr, 14),
+          fetchFitnessBulk(dStr),
+          fetchLocation(dStr),
+        ])
+        setIsLoading(false)
+      }
     }
 
     loadData()
@@ -524,6 +592,18 @@ export default function LifeDashboard() {
   useEffect(() => {
     setMounted(true)
     const timer = setInterval(() => setLastUpdate(new Date().toLocaleTimeString('ja-JP')), 1000)
+
+    // タブに戻ったときにキャッシュが古ければ即更新
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return
+      const dStr = format(new Date(), "yyyy-MM-dd")
+      const cached = loadCache(ck('bulk', `${dStr}_14`))
+      if (!cached || isCacheStale((cached as any).ts, dStr)) {
+        fetchDailyBulk(dStr, 14)
+        fetchFitnessBulk(dStr)
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
     // Trinoからチャット履歴をロード（クロスブラウザ対応）
     fetch("/api/chat-history")
       .then(r => r.json())
@@ -534,8 +614,11 @@ export default function LifeDashboard() {
         }
       })
       .catch(console.error)
-    return () => clearInterval(timer)
-  }, [])
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener("visibilitychange", handleVisibility)
+    }
+  }, [fetchDailyBulk, fetchFitnessBulk])
 
   useEffect(() => {
     if (!mounted) return
@@ -551,10 +634,29 @@ export default function LifeDashboard() {
     return () => clearInterval(timer)
   }, [mounted, selectedDate, fetchDailyBulk, fetchFitnessBulk, fetchLocation])
 
+  useEffect(() => {
+    if (!mounted) return
+
+    // 常時表示ダッシュボード用: 翌朝9時に今日の日付へ自動切り替え
+    // 選択日が「昨日」のときのみ切り替え（手動で過去日を閲覧中は対象外）
+    const now = new Date()
+    const next9am = new Date(now)
+    next9am.setHours(9, 0, 0, 0)
+    if (now >= next9am) next9am.setDate(next9am.getDate() + 1)
+
+    const timer = setTimeout(() => {
+      const today = new Date()
+      const yesterdayStr = format(subDays(today, 1), "yyyy-MM-dd")
+      if (format(selectedDate, "yyyy-MM-dd") === yesterdayStr) setSelectedDate(today)
+    }, next9am.getTime() - now.getTime())
+
+    return () => clearTimeout(timer)
+  }, [mounted, selectedDate])
+
   if (!mounted) return <div className="h-screen w-screen bg-background" />
 
   return (
-    <div className="h-screen w-screen bg-background p-3 flex flex-col overflow-hidden">
+    <div className="min-h-screen w-full bg-background p-3 flex flex-col md:h-screen md:overflow-hidden">
       <header className="flex items-center justify-between mb-2 shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -573,9 +675,9 @@ export default function LifeDashboard() {
         <DatePicker date={selectedDate} onDateChange={setSelectedDate} />
       </header>
 
-      <div className="flex-1 flex gap-3 min-h-0">
-        <div className="w-[30%] flex flex-col gap-2 min-h-0">
-          <div className="cyber-card rounded-xl p-3 flex flex-col min-h-0" style={{ flex: '0 0 auto', maxHeight: '42%' }}>
+      <div className="flex-1 flex flex-col md:flex-row gap-3 md:min-h-0">
+        <div className="w-full md:w-[30%] flex flex-col gap-2 md:min-h-0">
+          <div className="cyber-card rounded-xl p-3 flex flex-col md:flex-none md:max-h-[42%] md:min-h-0">
             <div className="flex items-center justify-between mb-2 shrink-0">
               <h2 className="text-xs font-semibold text-[oklch(0.75_0.15_195)]">KPI</h2>
               <PeriodSelector value={summaryPeriod} onChange={setSummaryPeriod} size="sm" />
@@ -585,7 +687,7 @@ export default function LifeDashboard() {
             </div>
           </div>
 
-          <div className="cyber-card-green rounded-xl p-3 shrink-0" style={{ maxHeight: '32%' }}>
+          <div className="cyber-card-green rounded-xl p-3 md:shrink-0 md:max-h-[32%] md:overflow-auto">
             {(() => {
               const dStr = format(selectedDate, "yyyy-MM-dd")
               const fb = dailyCache[dStr]?.feedback
@@ -640,7 +742,7 @@ export default function LifeDashboard() {
             })()}
           </div>
 
-          <div className="flex-1 cyber-card rounded-xl p-3 flex flex-col min-h-0">
+          <div className="cyber-card rounded-xl p-3 flex flex-col h-[320px] md:flex-1 md:h-auto md:min-h-0">
             <AiChatPanel
               dateStr={format(selectedDate, "yyyy-MM-dd")}
               contextData={aiContext}
@@ -650,8 +752,8 @@ export default function LifeDashboard() {
           </div>
         </div>
 
-        <div className="w-[70%] flex flex-col gap-3 min-h-0">
-          <div className="h-[32%] cyber-card rounded-xl p-3 flex flex-col">
+        <div className="w-full md:w-[70%] flex flex-col gap-3 md:min-h-0">
+          <div className="h-[220px] md:h-[32%] cyber-card rounded-xl p-3 flex flex-col">
             <div className="flex items-center justify-between mb-2 shrink-0">
               <h2 className="text-xs font-semibold text-[oklch(0.75_0.15_195)]">Daily Activity Log</h2>
               <div className="flex items-center gap-3">
@@ -665,7 +767,7 @@ export default function LifeDashboard() {
             </div>
           </div>
 
-          <div className="flex-1 cyber-card rounded-xl p-3 flex flex-col min-h-0">
+          <div className="cyber-card rounded-xl p-3 flex flex-col min-h-[480px] md:flex-1 md:min-h-0">
             <DetailPanel
               date={selectedDate}
               period={detailPeriod}
@@ -682,7 +784,7 @@ export default function LifeDashboard() {
         </div>
       </div>
 
-      <footer className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground shrink-0 px-1">
+      <footer className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground shrink-0 px-1 md:block">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
             <span className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-orange-400 animate-pulse' : 'bg-[oklch(0.7_0.2_145)]'} shadow-[0_0_6px_currentColor]`} />
@@ -690,7 +792,7 @@ export default function LifeDashboard() {
           </span>
           <span className="font-mono text-muted-foreground ml-2">Last Update: {lastUpdate}</span>
         </div>
-        <div className="flex items-center gap-4 font-mono">
+        <div className="hidden md:flex items-center gap-4 font-mono">
           <span className="text-[oklch(0.7_0.2_145)]">Trino Bulk Cache: Active</span>
           <span className="text-[oklch(0.75_0.15_195)]">ActivityWatch: OK</span>
           <span className="text-[oklch(0.7_0.2_60)]">OwnTracks: OK</span>

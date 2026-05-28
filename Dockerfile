@@ -8,10 +8,9 @@ RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
 WORKDIR /app
-RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm build
+RUN ./node_modules/.bin/next build
 
 FROM base AS runner
 WORKDIR /app

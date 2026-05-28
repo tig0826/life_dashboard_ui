@@ -45,7 +45,7 @@ const feedbackConfig = {
 
 export function AiFeedback({ feedback }: AiFeedbackProps) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {feedback.map((item, index) => {
         const config = feedbackConfig[item.type]
         const Icon = config.icon
@@ -53,14 +53,14 @@ export function AiFeedback({ feedback }: AiFeedbackProps) {
           <div
             key={index}
             className={cn(
-              "flex items-start gap-2 p-2 rounded-lg border",
+              "flex items-start gap-1.5 p-1.5 rounded-lg border",
               config.bg,
               config.border,
               config.glow
             )}
           >
             <Icon className={cn("w-3.5 h-3.5 mt-0.5 shrink-0", config.color)} />
-            <span className="text-[11px] text-foreground/90 leading-relaxed">{item.message}</span>
+            <span className="text-xs text-foreground/90 leading-snug">{item.message}</span>
           </div>
         )
       })}

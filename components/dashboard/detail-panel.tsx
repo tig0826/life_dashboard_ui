@@ -133,8 +133,8 @@ function fmtMin(min: number) {
 export function DetailPanel({ date, period, onPeriodChange, activeTab, onTabChange, mealData, workData, fitnessData, locationData, entertainmentData }: DetailPanelProps) {
   return (
     <Tabs value={activeTab} onValueChange={onTabChange} className="h-full flex flex-col">
-      <div className="flex items-center justify-between shrink-0 mb-2">
-        <TabsList className="grid grid-cols-5 bg-[oklch(0.12_0.015_250)] p-0.5 h-9 rounded-lg">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1.5 shrink-0 mb-2">
+        <TabsList className="grid grid-cols-5 bg-[oklch(0.12_0.015_250)] p-0.5 h-9 rounded-lg w-full md:w-auto">
           <TabsTrigger value="work" className="text-xs gap-1.5 data-[state=active]:bg-[oklch(0.85_0.18_90/0.2)] h-8 rounded-md font-medium">
             <Briefcase className="w-3.5 h-3.5" /> Work
           </TabsTrigger>
