@@ -68,6 +68,7 @@ export function AiChatPanel({ dateStr, contextData, initialMessages, onMessagesC
   }, [isExpanded])
 
   const handleClear = () => {
+    if (!window.confirm("チャット履歴をすべて削除しますか？\nこの操作は元に戻せません。")) return
     setMessages([])
     onMessagesChange?.([])
   }

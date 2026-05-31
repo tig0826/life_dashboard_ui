@@ -252,8 +252,10 @@ async function fetchBulkWithDedup(dates: string[]): Promise<DayBulkData[]> {
     const batchPromise = fetchBulkDates(newDates).then(results => {
       for (const r of results) {
         bulkCache.set(r.date, { data: r, ts: Date.now() })
-        bulkInflight.delete(r.date)
       }
+      // Clear ALL requested dates — including ones with no row in Trino,
+      // so they are retried on the next warmRecent cycle instead of stuck forever.
+      for (const d of newDates) bulkInflight.delete(d)
       return results
     }).catch(e => {
       for (const d of newDates) bulkInflight.delete(d)
@@ -275,8 +277,10 @@ async function fetchFitnessWithDedup(dates: string[]): Promise<FitnessDay[]> {
     const batchPromise = fetchFitnessDates(newDates).then(results => {
       for (const r of results) {
         fitnessCache.set(r.date, { data: r, ts: Date.now() })
-        fitnessInflight.delete(r.date)
       }
+      // Clear ALL requested dates — including ones with no row in Trino yet
+      // (e.g. today's Fitbit hasn't synced), so warmRecent can retry next hour.
+      for (const d of newDates) fitnessInflight.delete(d)
       return results
     }).catch(e => {
       for (const d of newDates) fitnessInflight.delete(d)

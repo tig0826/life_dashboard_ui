@@ -82,7 +82,7 @@ type AiContext = {
 
 
 
-function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) {
+function buildAiContext(currentData: any, fitnessCache: any[], dailyCache: Record<string, any>, dateStr: string) {
   const fitness = currentData.fitness
   const round1 = (v: number | null | undefined) =>
     v != null ? Math.round(v * 10) / 10 : null
@@ -151,7 +151,7 @@ function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) 
     meals: mealsCtx,
   }
 
-  // ── 過去14日トレンド ──────────────────────────────────────────────
+  // ── 過去14日トレンド（fitness + work を結合）────────────────────────
   const sorted = [...fitnessCache].sort((a, b) => b.date.localeCompare(a.date))
   const past14 = sorted.slice(0, 14).map((d) => ({
     date: d.date,
@@ -159,6 +159,11 @@ function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) 
     steps: d.steps ?? null,
     calorie_balance: d.balance ?? null,
     resting_hr: d.restingHr ?? null,
+    work_score: dailyCache[d.date]?.work?.work?.score ?? null,
+    dev_score: dailyCache[d.date]?.work?.dev?.score ?? null,
+    work_focus_pct: dailyCache[d.date]?.work?.work?.focusRate ?? null,
+    work_hours: dailyCache[d.date]?.work?.work?.coreSec
+      ? round1(dailyCache[d.date].work.work.coreSec / 3600) : null,
   }))
 
   const last7 = sorted.slice(0, 7)
@@ -166,6 +171,9 @@ function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) 
     const valid = vals.filter((v): v is number => v != null)
     return valid.length ? round1(valid.reduce((a, b) => a + b, 0) / valid.length) : null
   }
+
+  const last7Work = last7.map((d) => dailyCache[d.date]?.work?.work?.score ?? null)
+  const last7Dev  = last7.map((d) => dailyCache[d.date]?.work?.dev?.score ?? null)
 
   return {
     target_date: dateStr,
@@ -176,6 +184,8 @@ function buildAiContext(currentData: any, fitnessCache: any[], dateStr: string) 
       steps: avg(last7.map((d) => d.steps)),
       calorie_balance: avg(last7.map((d) => d.balance)),
       resting_hr: avg(last7.map((d) => d.restingHr)),
+      work_score: avg(last7Work),
+      dev_score: avg(last7Dev),
     },
   }
 }
@@ -396,7 +406,7 @@ export default function LifeDashboard() {
 
   const aiContext = useMemo(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd")
-    const base = buildAiContext(currentData, fitnessCache, dStr)
+    const base = buildAiContext(currentData, fitnessCache, dailyCache, dStr)
 
     // 今日のAI FBメッセージを含める
     const fb = dailyCache[dStr]?.feedback
@@ -406,8 +416,8 @@ export default function LifeDashboard() {
           .map(s => ({ slot: s, messages: fb[s]!.messages }))
       : []
 
-    // 直近20件のチャット履歴（アシスタントに記憶させる）
-    const recentChat = chatHistory.slice(-20).map(m => ({
+    // 直近60件のチャット履歴（日付をまたいだ継続的な文脈として活用）
+    const recentChat = chatHistory.slice(-60).map(m => ({
       role: m.role,
       text: m.parts?.filter((p: any) => p.type === "text").map((p: any) => p.text).join("") ?? "",
     }))
